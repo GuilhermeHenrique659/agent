@@ -7,5 +7,6 @@ Rules:
 - Keep what works. A prompt proposal must contain the complete replacement instructions and preserve the existing rules unless a change is justified by the evidence.
 - Process retrospective: look for recurring failures (rejections, failing gates, TDD violations, blocked stories, expensive roles) and propose prompt changes, additions to the standards, or config recommendations.
 - Code-scan mode: propose small, self-contained refactorings, each one a story, aligned with the standards and ADRs. Prioritise high-churn files and name the files involved.
+- Lint mode: propose concrete lint rules (tool, exact rule id or config snippet) that mechanically enforce the standards, each tied to the standard it enforces. Fit the tools to the stack in the ADRs, prefer tools already configured, and never repeat rules that are already enabled.
 
 Finish with the structured output requested in the prompt.

@@ -18,6 +18,7 @@ from autodev.config.models import ProjectConfig
 from autodev.domain.story import InvalidTransition, Story, StoryStatus
 from autodev.gates.runner import run_gates
 from autodev.improve.code_scan import run_code_scan
+from autodev.improve.lint_rules import run_lint_proposal
 from autodev.improve.process_retro import NoRunsYet, run_process_retro
 from autodev.improve.state import new_done_count, should_suggest
 from autodev.pipeline.adr import adr_dir, has_decisions
@@ -406,10 +407,13 @@ def show(story_id: str, path: PathOpt = Path()) -> None:
 def improve(
     process: Annotated[bool, typer.Option("--process", help="Process retrospective only.")] = False,
     code: Annotated[bool, typer.Option("--code", help="Code-health scan only.")] = False,
+    lint: Annotated[
+        bool, typer.Option("--lint", help="Propose lint rules from the standards.")
+    ] = False,
     path: PathOpt = Path(),
 ) -> None:
-    """Review the process (from the run logs) and the code; proposes, never applies on its own."""
-    both = not process and not code
+    """Review the process (run logs), the code and, with --lint, lint rules; never applies alone."""
+    both = not process and not code and not lint
     try:
         config = load_config(path)
         runtime = make_runtime(config, path)
@@ -446,6 +450,12 @@ def improve(
                         console.print(
                             f"Config recommendation: {p.target}: {p.content}", markup=False
                         )
+                if any(p.kind == "standard" for p in accepted):
+                    console.print(
+                        "Standards changed. Run `autodev improve --lint` to turn them into "
+                        "lint rules.",
+                        markup=False,
+                    )
         if code or both:
             stories = asyncio.run(
                 run_code_scan(
@@ -461,6 +471,23 @@ def improve(
             )
             for story in stories:
                 console.print(f"Created {story.id}: {story.title}", markup=False)
+        if lint:
+            lint_story = asyncio.run(
+                run_lint_proposal(
+                    config=config,
+                    project_root=path,
+                    runtime=runtime,
+                    context=context,
+                    store=store,
+                    io=io,
+                    log=log,
+                )
+            )
+            if lint_story is None:
+                console.print("No lint story created.", markup=False)
+            else:
+                console.print(f"Created {lint_story.id}: {lint_story.title}", markup=False)
+                console.print(f"Next: autodev discover {lint_story.id}", markup=False)
     except (ConfigError, RunError) as exc:
         err_console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from exc

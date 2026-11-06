@@ -2,7 +2,7 @@
 
 CLI em Python que orquestra agentes de IA para construir software. Ele leva um pedido (funcionalidade, correção ou melhoria) até o merge na branch principal. No caminho, entende o domínio com você, quebra o trabalho em stories, implementa com TDD e valida com gates automáticos e revisão por agentes.
 
-> **Status:** em desenvolvimento. O ciclo completo funciona: pedido com discovery e refinamento (`request`, `discover`, `approve`, `refine`, `show`), e implementação com TDD, revisão, QA e merge na main até DONE (`run`, `resume`). Também há briefing técnico com bootstrap de projeto vazio (`brief`), revisão de arquitetura no discovery e auto-melhoria (`improve`). Falta gerar regras de lint a partir dos standards. O pipeline com agentes está no [roadmap](#roadmap).
+> **Status:** roadmap do MVP concluído; ainda não testado de ponta a ponta com o modelo real. O ciclo completo está implementado e coberto por testes: pedido com discovery e refinamento (`request`, `discover`, `approve`, `refine`, `show`), e implementação com TDD, revisão, QA e merge na main até DONE (`run`, `resume`). Também há briefing técnico com bootstrap de projeto vazio (`brief`), revisão de arquitetura no discovery e auto-melhoria (`improve`, incluindo regras de lint derivadas dos standards com `--lint`).
 
 ## Como funciona
 
@@ -45,6 +45,7 @@ uv run autodev run S-0001 --path /caminho   # implementa, revisa, faz QA e merge
 uv run autodev discover S-0002 --path /caminho  # discovery de uma story DRAFT (ex.: melhoria sugerida pelo QA)
 uv run autodev resume S-0001 --path /caminho  # desbloqueia uma story BLOCKED
 uv run autodev improve --path /caminho      # retro do processo (métricas → propostas) e scan de código (→ stories)
+uv run autodev improve --lint --path /caminho  # regras de lint a partir de standards/ (→ story)
 ```
 
 ## Configuração
@@ -106,7 +107,7 @@ runtime:
 | 5 | QA, retrabalho, merge e conflitos, `discover` | ✅ |
 | 6 | Briefing técnico e revisão de arquitetura com ADRs, `brief` | ✅ |
 | 7a | `autodev improve`: retro do processo e scan de código | ✅ |
-| 7b | Regras de lint a partir de `standards/` | próximo |
+| 7b | Regras de lint a partir de `standards/`, `improve --lint` | ✅ |
 | depois | RAG, PR no GitHub, tasks em paralelo, Jira | |
 
 ## Desenvolvimento

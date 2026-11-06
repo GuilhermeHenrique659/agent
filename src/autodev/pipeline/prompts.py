@@ -281,3 +281,14 @@ def build_code_scan_prompt(churn: list[tuple[str, int]], context: list[Path]) ->
         "files that change most often.\n\n"
         f"Most changed files:\n{listed}\n\n{_context_section(context)}"
     )
+
+
+def build_lint_prompt(context: list[Path], lint_command: str | None) -> str:
+    return (
+        "Lint mode: propose lint rules that enforce the project standards. Only propose rules "
+        "for standards that a linter can check mechanically, using tools that fit the stack "
+        "described in the ADRs (prefer the tools already configured). Make each rule concrete "
+        "(the exact rule id or config snippet) and say which standard it enforces. Never "
+        "duplicate rules that are already enabled: read the project's lint config files first.\n\n"
+        f"Current lint command: {lint_command or 'none configured'}\n\n{_context_section(context)}"
+    )

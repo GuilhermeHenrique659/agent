@@ -38,6 +38,7 @@ Pedido → DISCOVERY → REFINAMENTO → [aprovação humana] → IMPLEMENTAÇÃ
 16. **QA e merge**: após o review aprovado, o QA verifica cada critério de aceite; reprovado → send_back (mesmo contador do review) → correção → review e QA de novo. Merge autônomo: pull (se `git.remote`), rebase na main, conflitos resolvidos pelo agente merger (o código confere que não restam marcadores; esgotou → `rebase --abort` → BLOCKED, main intacta), gates, `merge --ff-only`, push, DONE e `branch -d story/<id>`. Melhorias sugeridas pelo QA viram stories DRAFT **só depois do merge** (evita duplicar em retomadas); `autodev discover <id>` as leva ao discovery. Push falhou → BLOCKED com a main já mergeada localmente; o `resume` volta a IN_PROGRESS e refaz review/QA antes de tentar de novo.
 17. **Briefing e arquitetura** (agente architect, só leitura; o código grava tudo): `autodev brief` (oferecido no `request`/`discover` quando não há ADR além do template) é um chat → proposta → aceitar/feedback → ADRs Accepted, `standards/stack.md`, `commands` no config.yaml (edição pontual, preserva comentários) → commit `docs: technical briefing` na main. Repositório vazio (nada versionado fora de `.agent/`) → o implementer cria o esqueleto + teste smoke, validado pelos **gates** (exceção controlada ao TDD); falhou → reset até o commit de docs. No discovery, `needs_architecture_review` → architect propõe ADRs/componentes → você aceita ou dá feedback → seção `## Architecture decisions` na story, que o refiner transforma em tasks.
 18. **Auto-melhoria** (agente improver, só leitura; propõe, nunca aplica sozinho): `autodev improve --process` calcula métricas determinísticas dos logs → propostas de prompt/standard/config → você aceita ou pula cada uma → prompts viram `.agent/process/<role>.md` (valem automaticamente; o `prompt:` do config tem precedência), standards são acrescentados, config só recomendada → commit `chore(process): ...`. `--code`: churn do git + improver → refatorações → as escolhidas viram stories DRAFT. Depois de uma story DONE, o CLI sugere o improve quando há `improve.every_n_stories` (padrão 5) novas DONE desde a última vez (estado em `.agent/runs/improve-state.json`).
+19. **Lint a partir dos standards**: `autodev improve --lint` (fora do padrão do `improve`) → improver propõe regras (ferramenta, regra, standard que aplica) → você escolhe → **uma** story DRAFT com tabela de regras e guia de TDD: fixture com a violação em `tests/`, excluída do lint normal, e um teste que roda o linter direto nela (red) até a regra ser habilitada (green). Aceitar um standard na retro faz o CLI sugerir o `--lint`.
 
 ## Estrutura do `.agent/` no projeto-alvo
 
@@ -79,7 +80,8 @@ src/autodev/
   adapters/            git.py (GitRepo: ... reset_hard, is_ignored), claude_sdk_runtime.py (build_options, deny_git_hook),
                        git_guard.py (is_forbidden_git_command), knowledge_folder.py (ContextSource)
   adapters/console_io.py (UserIO no terminal)
-  improve/             metrics.py (ProcessStats dos runs/*.jsonl), state.py (dica a cada N), process_retro.py, code_scan.py
+  improve/             metrics.py (ProcessStats dos runs/*.jsonl), state.py (dica a cada N), process_retro.py, code_scan.py,
+                       lint_rules.py, selection.py
   futuro: file_queue_source, local_review (GitHub PR)
 tests/fakes.py         FakeAgentRuntime roteirizável (passos por papel, podem editar arquivos)
 ```
@@ -99,7 +101,7 @@ Regras da `Story` (em `domain/story.py`): avanço só pela cadeia `draft→disco
 | 5 | QA, loop de retrabalho → BLOCKED, merge e conflitos → DONE, `autodev discover` | ✅ feito |
 | 6 | Briefing técnico (`autodev brief`, bootstrap de projeto vazio) e revisão de arquitetura/ADRs no discovery | ✅ feito |
 | 7a | `autodev improve` (métricas + retro de processo, scan de código → stories, dica a cada N stories, prompts por convenção) | ✅ feito |
-| 7b | Regras de lint a partir de `standards/` (viram story normal) | próximo |
+| 7b | `autodev improve --lint`: regras de lint a partir de `standards/` viram uma story normal | ✅ feito |
 | depois | RAG, PR no GitHub, worktrees/paralelismo, Jira | |
 
 ## Comandos

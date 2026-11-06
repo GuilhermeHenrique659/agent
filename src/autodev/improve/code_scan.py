@@ -4,6 +4,7 @@ from autodev.adapters.git import GitRepo
 from autodev.config.models import ProjectConfig
 from autodev.domain.role import Role
 from autodev.domain.story import Story
+from autodev.improve.selection import ask_selection
 from autodev.improve.state import mark_improved
 from autodev.pipeline import prompts
 from autodev.pipeline.outputs import CodeReview
@@ -16,24 +17,6 @@ from autodev.ports.user_io import UserIO
 
 _TITLE_CHARS = 60
 _PROMPT = "Create stories for which proposals? (e.g. 1,3 / all / none)"
-
-
-def _parse_selection(answer: str, count: int) -> list[int] | None:
-    """0-based indexes, or None when the answer is invalid."""
-    text = answer.strip().lower()
-    if text in ("", "none"):
-        return []
-    if text == "all":
-        return list(range(count))
-    chosen: set[int] = set()
-    for part in text.split(","):
-        part = part.strip()
-        if not part:
-            continue
-        if not part.isdecimal() or not 1 <= int(part) <= count:
-            return None
-        chosen.add(int(part) - 1)
-    return sorted(chosen)
 
 
 async def run_code_scan(
@@ -72,10 +55,7 @@ async def run_code_scan(
         for n, p in enumerate(review.proposals, start=1):
             files = ", ".join(p.files)
             io.show(f"{n}. {p.title}\n{p.description}\nRationale: {p.rationale}\nFiles: {files}\n")
-        selection = _parse_selection(io.ask(_PROMPT), len(review.proposals))
-        while selection is None:
-            selection = _parse_selection(io.ask(_PROMPT), len(review.proposals))
-        for index in selection:
+        for index in ask_selection(io, _PROMPT, len(review.proposals)):
             p = review.proposals[index]
             description = (
                 f"{p.description}\n\nRationale: {p.rationale}\n\n"

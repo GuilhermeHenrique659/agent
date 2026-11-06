@@ -19,6 +19,8 @@ from autodev.pipeline.outputs import (
     DiscoveryTurn,
     GlossaryEntry,
     ImplementerOutput,
+    LintProposal,
+    LintRule,
     ProcessProposal,
     ProcessReview,
     QaOutput,
@@ -517,6 +519,77 @@ def test_improve_runs_both_by_default(tmp_path: Path, monkeypatch: pytest.Monkey
     assert "Split app" in StoryStore(tmp_path).get("S-0001").title
     assert len(fake.requests_for(Role.IMPROVER)) == 2
     assert "process/implementer.md" in result.output
+
+
+def lint_step() -> Step:
+    return Step(
+        LintProposal(
+            summary="Lint",
+            rules=[LintRule(tool="ruff", rule="T201", standard="logging.md", rationale="r")],
+        )
+    )
+
+
+def test_improve_lint_only_creates_story_and_prints_next_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    improve_project(tmp_path)
+    fake = FakeAgentRuntime()
+    fake.script(Role.IMPROVER, lint_step())
+    patch_factories(monkeypatch, fake, FakeIO("all"))
+    result = runner.invoke(app, ["improve", "--lint", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert len(fake.requests_for(Role.IMPROVER)) == 1
+    story = StoryStore(tmp_path).get("S-0001")
+    assert story.title == "Enforce standards with lint rules"
+    assert "S-0001" in result.output
+    assert "Next: autodev discover S-0001" in result.output
+
+
+def test_improve_lint_prints_when_no_story(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    improve_project(tmp_path)
+    fake = FakeAgentRuntime()
+    fake.script(Role.IMPROVER, lint_step())
+    patch_factories(monkeypatch, fake, FakeIO("none"))
+    result = runner.invoke(app, ["improve", "--lint", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "No lint story created." in result.output
+
+
+def test_improve_default_does_not_run_lint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    improve_project(tmp_path)
+    fake = FakeAgentRuntime()
+    fake.script(Role.IMPROVER, retro_step(), scan_step())
+    patch_factories(monkeypatch, fake, FakeIO("a", "none"))
+    result = runner.invoke(app, ["improve", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert len(fake.requests_for(Role.IMPROVER)) == 2
+    assert "No lint story created." not in result.output
+
+
+def test_improve_prints_lint_hint_when_standard_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    improve_project(tmp_path)
+    (tmp_path / ".agent" / "standards").mkdir(exist_ok=True)
+    fake = FakeAgentRuntime()
+    fake.script(
+        Role.IMPROVER,
+        Step(
+            ProcessReview(
+                summary="Retro",
+                proposals=[
+                    ProcessProposal(
+                        kind="standard", target="style.md", rationale="r", content="- rule"
+                    )
+                ],
+            )
+        ),
+    )
+    patch_factories(monkeypatch, fake, FakeIO("a"))
+    result = runner.invoke(app, ["improve", "--process", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "Run `autodev improve --lint` to turn them into lint rules." in result.output
 
 
 def test_improve_process_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

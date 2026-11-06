@@ -160,3 +160,15 @@ class RefactoringProposal(BaseModel):
 class CodeReview(BaseModel):
     summary: str
     proposals: list[RefactoringProposal] = []
+
+
+class LintRule(BaseModel):
+    tool: str
+    rule: str
+    standard: str
+    rationale: str
+
+
+class LintProposal(BaseModel):
+    summary: str
+    rules: list[LintRule] = []

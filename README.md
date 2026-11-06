@@ -2,7 +2,7 @@
 
 CLI em Python que orquestra agentes de IA para construir software. Ele leva um pedido (funcionalidade, correção ou melhoria) até o merge na branch principal. No caminho, entende o domínio com você, quebra o trabalho em stories, implementa com TDD e valida com gates automáticos e revisão por agentes.
 
-> **Status:** em desenvolvimento. Hoje funcionam `autodev init`, `autodev status` e `autodev check`. O pipeline com agentes está no [roadmap](#roadmap).
+> **Status:** em desenvolvimento. Hoje funcionam `init`, `status`, `check`, `run` (implementação com TDD + revisão, a partir de uma story aprovada escrita à mão) e `resume`. Discovery, QA e merge ainda não. O pipeline com agentes está no [roadmap](#roadmap).
 
 ## Como funciona
 
@@ -36,6 +36,8 @@ uv run autodev --help
 uv run autodev init /caminho/do/projeto     # cria /caminho/do/projeto/.agent/
 uv run autodev status /caminho/do/projeto   # lista as stories do backlog
 uv run autodev check /caminho/do/projeto    # roda os gates de build, testes e lint
+uv run autodev run S-0001 --path /caminho   # implementa uma story aprovada até IN_QA
+uv run autodev resume S-0001 --path /caminho  # desbloqueia uma story BLOCKED
 ```
 
 ## Configuração
@@ -51,8 +53,8 @@ Toda a configuração fica em documentos na pasta `.agent/` do projeto-alvo:
 | `architecture/adr/` | decisões de arquitetura |
 | `standards/` | padrões de código aplicados na revisão e nas regras de lint |
 | `process/` | prompts que substituem os embutidos, por papel (ex.: `implementer.md`) |
-| `backlog/` | stories (`S-0001.md`) |
-| `runs/` | logs das execuções |
+| `backlog/` | stories (`S-0001.md`); fora do git |
+| `runs/` | logs das execuções (JSONL); fora do git |
 
 ### Agentes
 
@@ -72,6 +74,8 @@ agents:
       tools: [Read, Grep, Glob, Bash]
 ```
 
+Os agentes só podem usar as ferramentas listadas (padrão: Read, Write, Edit, Glob, Grep, Bash) e nunca rodam comandos git que alteram o repositório; `max_budget_usd` define um teto de custo opcional.
+
 Cada campo segue a precedência: valor do papel → `defaults` → padrão embutido. Chaves desconhecidas são rejeitadas, então erros de digitação falham logo no carregamento.
 
 ## Roadmap
@@ -80,8 +84,8 @@ Cada campo segue a precedência: valor do papel → `defaults` → padrão embut
 |---|---|---|
 | 1 | Esqueleto, configuração, domínio Story/Task, backlog, `init`/`status` | ✅ |
 | 2 | Gates de build/test/lint, git, gate de TDD, `autodev check` | ✅ |
-| 3 | Runtime de agentes (Claude Agent SDK), implementação e revisão, `autodev run` | próximo |
-| 4 | Discovery interativo e refinamento, `autodev approve` | |
+| 3 | Runtime de agentes (Claude Agent SDK), implementação e revisão, `autodev run`/`resume` | ✅ |
+| 4 | Discovery interativo e refinamento, `autodev approve` | próximo |
 | 5 | QA, retrabalho, merge e conflitos | |
 | 6 | Briefing técnico e revisão de arquitetura com ADRs | |
 | 7 | `autodev improve` e regras de lint a partir de `standards/` | |

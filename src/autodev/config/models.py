@@ -8,6 +8,7 @@ _STRICT = ConfigDict(extra="forbid")
 
 DEFAULT_MODEL = "claude-opus-5-5"
 DEFAULT_MAX_TURNS = 50
+DEFAULT_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "Bash"]
 
 
 class Effort(StrEnum):
@@ -24,7 +25,8 @@ class AgentProfile(BaseModel):
     model: str = Field(min_length=1)
     effort: Effort
     max_turns: int = Field(ge=1)
-    tools: list[str] | None
+    tools: list[str]
+    max_budget_usd: float | None
     prompt: str | None
 
 
@@ -35,6 +37,7 @@ class AgentOverride(BaseModel):
     effort: Effort | None = None
     max_turns: int | None = Field(default=None, ge=1)
     tools: list[str] | None = None
+    max_budget_usd: float | None = Field(default=None, gt=0)
     prompt: str | None = None
 
 
@@ -53,7 +56,16 @@ class AgentsConfig(BaseModel):
             model=specific.model or d.model or DEFAULT_MODEL,
             effort=specific.effort or d.effort or Effort.HIGH,
             max_turns=specific.max_turns or d.max_turns or DEFAULT_MAX_TURNS,
-            tools=specific.tools if specific.tools is not None else d.tools,
+            tools=list(
+                specific.tools
+                if specific.tools is not None
+                else d.tools
+                if d.tools is not None
+                else DEFAULT_TOOLS
+            ),
+            max_budget_usd=(
+                specific.max_budget_usd if specific.max_budget_usd is not None else d.max_budget_usd
+            ),
             prompt=specific.prompt if specific.prompt is not None else d.prompt,
         )
 

@@ -29,7 +29,11 @@ Pedido → DISCOVERY → REFINAMENTO → [aprovação humana] → IMPLEMENTAÇÃ
 7. **Saída dos agentes**: JSON na resposta final validado por pydantic, com uma nova tentativa se inválido.
 8. **Portas (`Protocol`) só onde há mais de uma implementação pedida**: `AgentRuntime`, `ContextSource`, `StorySource` (sessão interativa / fila de arquivos; Jira/GitHub depois), `ReviewBackend` (local / GitHub). O resto é concreto.
 9. **Tasks de uma story rodam em sequência** no MVP (paralelismo com git worktrees depois).
-10. Reviewer e QA são só leitura (ferramentas restritas no config).
+10. Reviewer e QA são só leitura (ferramentas restritas no config). Como recebem Bash para rodar testes, isso ainda é orientado por prompt, não garantido.
+11. **Permissões dos agentes**: `permission_mode="dontAsk"` + só as ferramentas do perfil (`tools` resolvido; padrão Read/Write/Edit/Glob/Grep/Bash). Um hook PreToolUse nega comandos git que alteram o repositório: git é do orquestrador.
+12. **Falhas**: violação de regra do TDD (ou erro do agente) → `reset_hard` para antes da tentativa e repete com feedback; testes/gates falhando → mantém o commit e corrige em cima. Orçamento `limits.max_attempts` por fase (red/green) por task; esgotou → BLOCKED. Commits de correção de review podem tocar testes, mas passam pelos gates.
+13. **Estado do orquestrador fora do git**: `.agent/backlog/` e `.agent/runs/` são ignorados via `.agent/.gitignore` (criado pelo `init`), senão o estado mudaria ao trocar de branch e sujaria os commits. `autodev run` recusa se não estiverem ignorados.
+14. Agentes carregam só as settings do projeto-alvo (`setting_sources=["project"]`); `max_budget_usd` opcional por papel.
 
 ## Estrutura do `.agent/` no projeto-alvo
 
@@ -49,17 +53,22 @@ runs/                logs de execução (alimentam a auto-melhoria)
 
 ```
 src/autodev/
-  cli.py               init | status | check   (futuro: request | run | approve | improve)
+  cli.py               init | status | check | run | resume   (futuro: request | approve | improve)
   config/              models.py (pydantic, extra="forbid"), loader.py (load_config, ConfigError)
   domain/              role.py (Role), story.py (Story, Task, StoryStatus, InvalidTransition)
   pipeline/            state_store.py (StoryStore: save/get/has/values/next_id)
-                       futuro: orchestrator.py, phases/{discovery,refinement,implementation,review,qa,merge}.py
+                       story_runner.py (StoryRunner: red → green → gates por task, depois review loop → IN_QA)
+                       prompts.py (instruções por papel + builders dos prompts de tarefa)
+                       outputs.py (saídas tipadas dos agentes), run_log.py (JSONL em .agent/runs/)
+  prompts/             instruções embutidas por papel (test_writer, implementer, reviewer)
+  ports/               agent_runtime.py (AgentRuntime, AgentRequest, AgentOutcome, AgentError), context_source.py
   templates/agent/     template do .agent/ copiado pelo `autodev init`
   gates/               runner.py (CommandGate, run_gates: build→test→lint, para na 1ª falha)
                        tdd.py (TddGuard: check_red / check_green)
-  adapters/            git.py (GitRepo: branch, commit, changed_files, rebase c/ conflitos, merge_ff, push/pull)
-  futuro: ports/, adapters/ (claude_sdk_runtime, knowledge_folder, interactive_source,
-          file_queue_source, local_review), prompts/, improve/
+  adapters/            git.py (GitRepo: ... reset_hard, is_ignored), claude_sdk_runtime.py (build_options, deny_git_hook),
+                       git_guard.py (is_forbidden_git_command), knowledge_folder.py (ContextSource)
+  futuro: adapters/ (interactive_source, file_queue_source, local_review), phases de discovery/qa/merge, improve/
+tests/fakes.py         FakeAgentRuntime roteirizável (passos por papel, podem editar arquivos)
 ```
 
 Regras do TDD guard (em `gates/tdd.py`; arquivos de teste = `tdd.test_globs`, fnmatch no caminho relativo): sem `commands.test` → reprova (nunca pula); commit red deve mudar ≥1 arquivo, só arquivos de teste, e a suíte tem que falhar (timeout não conta como red); commit green não pode tocar arquivos de teste e a suíte tem que passar. Os testes rodam na working tree atual: fazer checkout do commit antes. Limitação conhecida: uma suíte que falha por erro de sintaxe/import também conta como red.
@@ -72,8 +81,8 @@ Regras da `Story` (em `domain/story.py`): avanço só pela cadeia `draft→disco
 |---|---|---|
 | 1 | Esqueleto, config, domínio Story/Task, StoryStore, `init`/`status` | ✅ feito |
 | 2 | Gates build/test/lint, adapter git, gate TDD red→green (sem LLM), `autodev check` | ✅ feito |
-| 3 | `ClaudeSdkRuntime` + `FakeAgentRuntime`, implementação e revisão por agente, `autodev run <story>` | próximo |
-| 4 | Discovery interativo (UL, event storming) + refinamento + `autodev approve` | |
+| 3 | `ClaudeSdkRuntime` + `FakeAgentRuntime`, implementação e revisão por agente, `autodev run <story>`, `autodev resume` | ✅ feito (teste live com o SDK real ainda não executado) |
+| 4 | Discovery interativo (UL, event storming) + refinamento + `autodev approve` | próximo |
 | 5 | QA, loop de retrabalho → BLOCKED, merge e conflitos → DONE | |
 | 6 | Briefing técnico (projeto vazio) e revisão de arquitetura/ADRs | |
 | 7 | `autodev improve` (retro + refatoração) e geração de regras de lint a partir de `standards/` | |
@@ -91,6 +100,9 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy                               # strict em src e tests
 uv run autodev init <path>                # gerar .agent/ num projeto
 uv run autodev check <path>               # rodar os gates build/test/lint
+uv run autodev run S-0001 --path <path>   # implementar uma story aprovada (chama o modelo!)
+uv run autodev resume S-0001 --path <path>
+uv run pytest -m live                     # teste com o SDK real (custa tokens; excluído por padrão)
 ```
 
 Uma fase só está pronta com `pytest`, `ruff check`, `ruff format --check` e `mypy` passando.

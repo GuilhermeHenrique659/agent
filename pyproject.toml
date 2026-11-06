@@ -8,6 +8,7 @@ dependencies = [
     "pyyaml",
     "typer",
     "rich",
+    "claude-agent-sdk>=0.2.178",
 ]
 
 [project.scripts]
@@ -41,3 +42,5 @@ files = ["src", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not live'"
+markers = ["live: calls the real model (deselected by default)"]

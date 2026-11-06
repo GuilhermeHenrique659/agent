@@ -139,3 +139,25 @@ def test_push_and_pull_with_local_bare_remote(repo: GitRepo, tmp_path: Path) -> 
     repo.pull("origin", "main")
     assert repo.head() == sha
     assert (repo.path / "c.txt").exists()
+
+
+def test_reset_hard_drops_commits_and_untracked_files(repo: GitRepo) -> None:
+    base = repo.head()
+    write_commit(repo, "a.txt", "a", "add a")
+    (repo.path / "README.md").write_text("changed\n")
+    (repo.path / "junk.txt").write_text("junk")
+    (repo.path / "dir").mkdir()
+    (repo.path / "dir" / "x.txt").write_text("x")
+    repo.reset_hard(base)
+    assert repo.head() == base
+    assert not repo.has_changes()
+    assert not (repo.path / "a.txt").exists()
+    assert not (repo.path / "junk.txt").exists()
+    assert not (repo.path / "dir").exists()
+    assert (repo.path / "README.md").read_text() == "hello\n"
+
+
+def test_is_ignored(repo: GitRepo) -> None:
+    (repo.path / ".gitignore").write_text("state/\n")
+    assert repo.is_ignored("state/")
+    assert not repo.is_ignored("other/")

@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 
 from autodev.config import ConfigError, load_config
-from autodev.config.models import Effort
+from autodev.config.models import DEFAULT_TOOLS, Effort
 from autodev.domain.role import Role
 
 
@@ -91,8 +91,27 @@ def test_builtin_defaults_apply_when_nothing_configured(tmp_path: Path) -> None:
     assert profile.model == "claude-opus-5-5"
     assert profile.effort == Effort.HIGH
     assert profile.max_turns == 50
-    assert profile.tools is None
+    assert profile.tools == DEFAULT_TOOLS
+    assert profile.max_budget_usd is None
     assert profile.prompt is None
+
+
+def test_max_budget_and_default_tools_resolution(tmp_path: Path) -> None:
+    write_config(
+        tmp_path,
+        "agents:\n  defaults:\n    max_budget_usd: 2.5\n    tools: [Read]\n"
+        "  roles:\n    qa:\n      max_budget_usd: 1\n      tools: []\n"
+        "    reviewer:\n      tools: [Grep]\n",
+    )
+    agents = load_config(tmp_path).agents
+    qa = agents.profile_for(Role.QA)
+    assert (qa.max_budget_usd, qa.tools) == (1, [])
+    assert agents.profile_for(Role.REVIEWER).tools == ["Grep"]
+    other = agents.profile_for(Role.MERGER)
+    assert (other.max_budget_usd, other.tools) == (2.5, ["Read"])
+    write_config(tmp_path, "agents:\n  defaults:\n    max_budget_usd: 0\n")
+    with pytest.raises(ConfigError, match="max_budget_usd"):
+        load_config(tmp_path)
 
 
 def test_template_config_is_valid_and_has_mixed_defaults(tmp_path: Path) -> None:

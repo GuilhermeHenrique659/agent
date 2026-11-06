@@ -69,6 +69,22 @@ class GitRepo:
         ).stdout
         return sorted(f for f in out.split("\0") if f)
 
+    def is_ignored(self, path: str) -> bool:
+        proc = self._run("check-ignore", "-q", path, check=False)
+        if proc.returncode == 0:
+            return True
+        if proc.returncode == 1:
+            return False
+        raise GitError(f"git check-ignore {path} failed: {proc.stderr.strip()}")
+
+    def reset_hard(self, ref: str) -> None:
+        """Reset HEAD and the working tree to `ref` and delete untracked files (git clean -fd).
+
+        Dropping untracked files removes whatever an agent created since `ref`.
+        """
+        self._run("reset", "--hard", ref)
+        self._run("clean", "-fd")
+
     def rebase(self, onto: str) -> RebaseResult:
         proc = self._run("rebase", onto, check=False)
         return self._rebase_result(proc, f"rebase {onto}")

@@ -1,3 +1,4 @@
+import asyncio
 import shutil
 from importlib.resources import as_file, files
 from pathlib import Path
@@ -7,9 +8,16 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from autodev.adapters.claude_sdk_runtime import ClaudeSdkRuntime
+from autodev.adapters.git import GitRepo
+from autodev.adapters.knowledge_folder import KnowledgeFolder
 from autodev.config import ConfigError, load_config
+from autodev.domain.story import InvalidTransition
 from autodev.gates.runner import run_gates
+from autodev.pipeline.run_log import RunLog
 from autodev.pipeline.state_store import StoryStore
+from autodev.pipeline.story_runner import RunError, StoryRunner
+from autodev.ports.agent_runtime import AgentRuntime
 
 app = typer.Typer(help="Orchestrate AI agents to build software.", no_args_is_help=True)
 console = Console()
@@ -70,3 +78,51 @@ def check(path: PathArg = Path()) -> None:
             err_console.print(f"[red]{r.name} failed:[/red]")
             err_console.print(r.output, markup=False, highlight=False)
         raise typer.Exit(1)
+
+
+def make_runtime() -> AgentRuntime:
+    """Factory for the agent runtime; tests monkeypatch it."""
+    return ClaudeSdkRuntime()
+
+
+@app.command()
+def run(story_id: str, path: Annotated[Path, typer.Option(help="Project root.")] = Path()) -> None:
+    """Implement an approved story (TDD per task), then review it, up to IN_QA."""
+    try:
+        config = load_config(path)
+        runner = StoryRunner(
+            config,
+            path,
+            make_runtime(),
+            GitRepo(path),
+            StoryStore(path),
+            KnowledgeFolder(path),
+            lambda sid: RunLog(path, sid),
+        )
+        story = asyncio.run(runner.run(story_id))
+    except (ConfigError, RunError) as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    console.print(f"{story.id}: {story.status.value}")
+    if story.blocked_reason:
+        console.print(f"Blocked: {story.blocked_reason}", markup=False)
+
+
+@app.command()
+def resume(
+    story_id: str, path: Annotated[Path, typer.Option(help="Project root.")] = Path()
+) -> None:
+    """Unblock a blocked story so `autodev run` can continue it."""
+    try:
+        load_config(path)
+        store = StoryStore(path)
+        story = store.get(story_id)
+        story.resume()
+    except (ConfigError, InvalidTransition) as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except KeyError as exc:
+        err_console.print(f"[red]Error:[/red] Story {story_id} not found.")
+        raise typer.Exit(1) from exc
+    store.save(story)
+    console.print(f"{story.id}: {story.status.value}")

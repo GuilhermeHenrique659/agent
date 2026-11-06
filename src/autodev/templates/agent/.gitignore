@@ -1,0 +1,3 @@
+# Orchestrator state: not versioned because it must not change when switching branches.
+backlog/
+runs/

@@ -10,6 +10,7 @@ from autodev.pipeline.outputs import CriterionCheck, Finding, QaIssue, QaOutput
 from autodev.pipeline.prompts import (
     MAX_FEEDBACK_CHARS,
     PRECEDENCE,
+    build_bootstrap_prompt,
     build_brief_prompt,
     build_code_scan_prompt,
     build_implementer_prompt,
@@ -203,3 +204,18 @@ def test_brief_prompt_mentions_project_conventions() -> None:
     text = build_brief_prompt([], empty=False)
     for expected in ("CLAUDE.md", "AGENTS.md", ".claude/rules/", "not restate"):
         assert expected in text
+
+
+def test_brief_prompt_requires_self_contained_commands() -> None:
+    text = build_brief_prompt([], empty=True)
+    assert "no activated environment" in text
+    assert "never assume tools are already installed" in text
+    assert "uv run pytest" in text
+
+
+def test_bootstrap_prompt_requires_running_commands_as_written() -> None:
+    text = build_bootstrap_prompt("SPEC-TEXT", [], None)
+    assert "SPEC-TEXT" in text
+    assert "exactly as written" in text
+    assert "lockfile" in text
+    assert "network or sandbox" in text

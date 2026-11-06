@@ -35,6 +35,7 @@ uv run autodev --help
 ```bash
 uv run autodev init /caminho/do/projeto     # cria /caminho/do/projeto/.agent/
 uv run autodev brief --path /caminho        # briefing técnico: stack, ADRs, comandos; esqueleto se o projeto estiver vazio
+uv run autodev bootstrap --path /caminho    # refaz só o esqueleto a partir dos ADRs (se o bootstrap do brief falhou)
 uv run autodev request "quero X" --path /caminho   # discovery no terminal (/done encerra) → refinamento → aprovar
 uv run autodev show S-0001 --path /caminho
 uv run autodev refine S-0001 -m "ajuste" --path /caminho

@@ -6,7 +6,7 @@ from autodev.config.models import ProjectConfig
 from autodev.domain.role import Role
 from autodev.gates.runner import run_gates
 from autodev.pipeline import prompts
-from autodev.pipeline.adr import write_adr
+from autodev.pipeline.adr import adr_dir, has_decisions, write_adr
 from autodev.pipeline.config_edit import set_commands
 from autodev.pipeline.conversation import ask_accept_or_feedback, converse
 from autodev.pipeline.outputs import BootstrapOutput, TechBrief, TechBriefTurn
@@ -83,7 +83,7 @@ async def run_brief(
         if config.commands.test is None:
             raise RunError("The technical brief defined no test command")
         await _bootstrap(
-            brief,
+            render_tech_brief(brief),
             docs_sha,
             config=config,
             project_root=project_root,
@@ -143,9 +143,55 @@ def _write_docs(brief: TechBrief, project_root: Path, repo: GitRepo, log: RunLog
     return repo.head()
 
 
+def recorded_decisions_text(project_root: Path, config: ProjectConfig) -> str:
+    """What the bootstrap needs, rebuilt from files: ADR and stack paths plus the commands."""
+    adrs = sorted(p for p in adr_dir(project_root).glob("*.md") if p.name != "0000-template.md")
+    adr_lines = "\n".join(f"- {p.relative_to(project_root).as_posix()}" for p in adrs)
+    c = config.commands
+    return (
+        "The technical decisions are recorded in files; read them first.\n\n"
+        f"ADRs:\n{adr_lines}\n\nStandards and stack: .agent/standards/stack.md\n\n"
+        f"## Commands\n- build: {c.build}\n- test: {c.test}\n- lint: {c.lint}\n"
+    )
+
+
+async def run_bootstrap(
+    *,
+    config: ProjectConfig,
+    project_root: Path,
+    runtime: AgentRuntime,
+    repo: GitRepo,
+    context: ContextSource,
+    log: RunLog,
+) -> None:
+    """Retry only the skeleton creation from the decisions already recorded."""
+    main = config.git.main_branch
+    if (branch := repo.current_branch()) != main:
+        raise RunError(f"The bootstrap must run on {main}, but the current branch is {branch}")
+    if repo.has_changes():
+        raise RunError("Working tree has uncommitted changes; commit or discard them first")
+    check_state_ignored(repo)
+    if not has_decisions(project_root):
+        raise RunError("No technical decisions recorded. Run `autodev brief` first")
+    if not is_empty_repo(repo):
+        raise RunError("The project already has code; bootstrap only runs on an empty repository")
+    if config.commands.test is None:
+        raise RunError("No test command configured (commands.test)")
+    await _bootstrap(
+        recorded_decisions_text(project_root, config),
+        repo.head(),
+        config=config,
+        project_root=project_root,
+        runtime=runtime,
+        repo=repo,
+        context=context,
+        log=log,
+    )
+
+
 async def _bootstrap(
-    brief: TechBrief,
-    docs_sha: str,
+    spec: str,
+    start_sha: str,
     *,
     config: ProjectConfig,
     project_root: Path,
@@ -161,7 +207,7 @@ async def _bootstrap(
     committed = False
     for _ in range(config.limits.max_attempts):
         before = repo.head()
-        prompt = prompts.build_bootstrap_prompt(brief, context.paths(), feedback)
+        prompt = prompts.build_bootstrap_prompt(spec, context.paths(), feedback)
         request = AgentRequest(role, profile, instructions, prompt, project_root, BootstrapOutput)
         try:
             outcome = await runtime.run(request)
@@ -178,12 +224,15 @@ async def _bootstrap(
             turns=outcome.turns,
             detail=outcome.output.summary[:_LOG_DETAIL_CHARS],
         )
-        if not repo.has_changes():
-            feedback = "The implementer made no changes."
-            continue
-        prefix = "fix" if committed else "chore"
-        repo.commit_all(f"{prefix}(bootstrap): project skeleton")
-        committed = True
+        no_change = not repo.has_changes()
+        if no_change:
+            if not committed:
+                feedback = "The implementer made no changes."
+                continue
+        else:
+            prefix = "fix" if committed else "chore"
+            repo.commit_all(f"{prefix}(bootstrap): project skeleton")
+            committed = True
         report = run_gates(config, project_root)
         detail = "\n".join(
             f"{r.name}: {'ok' if r.ok else 'failed'}" + ("" if r.ok else f"\n{r.output}")
@@ -193,5 +242,7 @@ async def _bootstrap(
         if report.ok:
             return
         feedback = prompts.gate_feedback(report)
-    repo.reset_hard(docs_sha)
+        if no_change:
+            feedback = f"You made no changes, but the gates still fail:\n{feedback}"
+    repo.reset_hard(start_sha)
     raise RunError(f"Bootstrap failed: {feedback}")

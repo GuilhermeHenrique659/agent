@@ -22,7 +22,7 @@ from autodev.onboarding.onboard import OnboardError
 from autodev.onboarding.onboard import onboard as run_onboard
 from autodev.pipeline.adr import adr_dir, has_decisions
 from autodev.pipeline.approval import approve_story
-from autodev.pipeline.briefing import is_empty_repo, run_brief
+from autodev.pipeline.briefing import is_empty_repo, run_bootstrap, run_brief
 from autodev.pipeline.refinement import refine_story
 from autodev.pipeline.request_flow import discover_and_refine, handle_request
 from autodev.pipeline.run_log import RunLog
@@ -213,6 +213,24 @@ async def brief(
     config = load_config(path)
     _warn_about_hooks(path, io)
     await _run_brief(config, path, make_runtime(config, path), io)
+
+
+@reports_errors
+async def bootstrap(
+    path: Path, io: UserIO, *, make_runtime: RuntimeFactory = default_make_runtime
+) -> None:
+    """Retry only the skeleton creation from the recorded technical decisions."""
+    config = load_config(path)
+    await run_bootstrap(
+        config=config,
+        project_root=path,
+        runtime=make_runtime(config, path),
+        repo=GitRepo(path),
+        context=make_context(config, path),
+        log=RunLog(path, "brief"),
+    )
+    io.show("Bootstrap: ran")
+    io.show(f"Skeleton committed; run `autodev check {path}` to see the gates.")
 
 
 @reports_errors

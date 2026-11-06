@@ -263,6 +263,30 @@ def test_gate_failure_feeds_output_back_to_implementer(tmp_path: Path) -> None:
     assert subjects(env.root)[0] == "fix(T1): Say two"
 
 
+def test_implement_no_change_after_kept_commit_reruns_gates(tmp_path: Path) -> None:
+    env = make_env(tmp_path, lint="test -f .agent/runs/ready || (echo lint-flag-missing; exit 1)")
+    env.runtime.script(Role.TEST_WRITER, tw())
+    flag = Step(ImplementerOutput(summary="nothing to change"), writer({".agent/runs/ready": "ok"}))
+    env.runtime.script(Role.IMPLEMENTER, impl(), flag)
+    env.runtime.script(Role.REVIEWER, approve())
+    env.runtime.script(Role.QA, qa_ok())
+    story = run(env)
+    assert story.status == StoryStatus.DONE
+    assert len(env.runtime.requests_for(Role.IMPLEMENTER)) == 2
+    assert subjects(env.root)[0] == "feat(T1): Say two"
+
+
+def test_implement_no_change_failure_carries_gate_output(tmp_path: Path) -> None:
+    env = make_env(tmp_path, max_attempts=2, lint="echo lint-flag-missing; exit 1")
+    env.runtime.script(Role.TEST_WRITER, tw())
+    env.runtime.script(Role.IMPLEMENTER, impl(), Step(ImplementerOutput(summary="nothing")))
+    story = run(env)
+    assert story.status == StoryStatus.BLOCKED
+    assert story.blocked_reason is not None
+    assert "made no changes, but the gates still fail" in story.blocked_reason
+    assert "lint-flag-missing" in story.blocked_reason
+
+
 def test_blocks_story_when_attempts_exhausted(tmp_path: Path) -> None:
     env = make_env(tmp_path, max_attempts=2)
     env.runtime.script(Role.TEST_WRITER, tw())

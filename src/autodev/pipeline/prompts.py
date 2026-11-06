@@ -214,7 +214,12 @@ def build_brief_prompt(context: list[Path], empty: bool) -> str:
     return (
         "Start the technical briefing. Define the stack (language, framework), the architecture "
         "style, the testing and lint tools, the build/test/lint shell commands and any "
-        "constraints. For an existing codebase, read CLAUDE.md, AGENTS.md and .claude/rules/ "
+        "constraints. The build/test/lint commands run in a fresh non-interactive shell at the "
+        "repository root with no activated environment and no globally installed project "
+        "tools: each command must set up or reuse the project environment by itself from the "
+        "project files (examples: `uv run pytest`, `uv run ruff check .`, `npm ci && npm test`, "
+        "`./gradlew test`); never assume tools are already installed. "
+        "For an existing codebase, read CLAUDE.md, AGENTS.md and .claude/rules/ "
         "first and do not restate conventions already documented there: the standards should "
         "only add what is missing. Ask a few focused questions per turn. Finish with done=true "
         "and the TechBrief (summary, ADRs, commands, standards). "
@@ -255,17 +260,15 @@ def build_architecture_review_prompt(
     return prompt
 
 
-def build_bootstrap_prompt(brief: TechBrief, context: list[Path], feedback: str | None) -> str:
-    commands = brief.commands
-    standards = "\n".join(f"- {s}" for s in brief.standards) or "- (none)"
-    adrs = "\n".join(f"- {a.title}: {a.decision}" for a in brief.adrs)
+def build_bootstrap_prompt(spec: str, context: list[Path], feedback: str | None) -> str:
     return (
-        "Create the project skeleton for this empty repository, following the ADRs and "
-        "standards below. Configure the test runner and the linters so that the configured "
-        "commands work, and add one smoke test that passes. Do not implement features.\n\n"
-        f"Summary:\n{brief.summary}\n\nDecisions:\n{adrs}\n\nStandards:\n{standards}\n\n"
-        f"Commands (must work when you finish):\n- build: {commands.build}\n"
-        f"- test: {commands.test}\n- lint: {commands.lint}\n\n"
+        "Create the project skeleton for this empty repository, following the decisions "
+        "below. Make the configured commands work exactly as written: create the project "
+        "files and, if the tool uses one, a lockfile through the tool itself. Add one smoke "
+        "test that passes. Run the commands to verify them. If a command cannot run because "
+        "of network or sandbox restrictions, say so in the summary instead of working around "
+        "the restrictions. Do not implement features.\n\n"
+        f"{spec}\n\n"
         f"{_context_section(context)}{_feedback_section(feedback)}"
     )
 

@@ -98,6 +98,12 @@ def brief(path: PathOpt = Path()) -> None:
 
 
 @app.command()
+def bootstrap(path: PathOpt = Path()) -> None:
+    """Retry only the project skeleton from the decisions recorded by `autodev brief`."""
+    _execute(commands.bootstrap(path, make_io(), make_runtime=make_runtime))
+
+
+@app.command()
 def run(story_id: str, path: PathOpt = Path()) -> None:
     """Implement an approved story (TDD per task), review, QA and merge it into main."""
     _execute(commands.run(path, make_io(), story_id, make_runtime=make_runtime))

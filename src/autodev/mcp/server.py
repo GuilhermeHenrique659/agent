@@ -132,6 +132,20 @@ def build_server(
         )
 
     @server.tool(
+        name="autodev_bootstrap",
+        description=(
+            "Retry only the project skeleton creation (empty repository) from the technical "
+            f"decisions recorded by the briefing. {_PATH} {_EVENT}"
+        ),
+    )
+    async def autodev_bootstrap(path: str | None = None) -> dict[str, Any]:
+        return await start(
+            "bootstrap",
+            path,
+            lambda root, io: commands.bootstrap(root, io, make_runtime=make_runtime),
+        )
+
+    @server.tool(
         name="autodev_request",
         description=(
             "Take a request (feature, fix or improvement) through discovery and refinement, "

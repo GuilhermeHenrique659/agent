@@ -232,8 +232,21 @@ class StoryRunner:
                 feedback = out
                 self._repo.reset_hard(before)
                 continue
-            if not self._repo.has_changes():
+            no_change = not self._repo.has_changes()
+            if no_change and not committed:
                 feedback = "The implementer made no changes."
+                continue
+            if no_change:
+                # An earlier attempt's commit was kept (its TDD rules were already checked);
+                # the gates decide whether the unchanged tree is now fine.
+                report = run_gates(self._config, self._root)
+                self._log_report(task, report)
+                if report.ok:
+                    return
+                feedback = (
+                    "You made no changes, but the gates still fail:\n"
+                    + prompts.gate_feedback(report)
+                )
                 continue
             prefix = "fix" if committed else first_prefix
             sha = self._repo.commit_all(f"{prefix}{message}")

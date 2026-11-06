@@ -14,6 +14,7 @@ from autodev.domain.role import Role
 from autodev.domain.story import Story, StoryStatus, Task
 from autodev.pipeline.outputs import (
     AdrDraft,
+    BootstrapOutput,
     CodeReview,
     Commands,
     DiscoveryResult,
@@ -419,6 +420,28 @@ def test_brief_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         ["git", "log", "-1", "--format=%s"], cwd=tmp_path, capture_output=True, text=True
     ).stdout.strip()
     assert log == "docs: technical briefing"
+
+
+def test_bootstrap_command_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    setup_git_project(tmp_path)
+    (tmp_path / ".agent/config.yaml").write_text("commands:\n  test: 'test -f smoke.txt'\n")
+    GitRepo(tmp_path).commit_all("docs: technical briefing")
+    fake = FakeAgentRuntime()
+
+    def write_marker(workdir: Path) -> None:
+        (workdir / "smoke.txt").write_text("ok")
+
+    skeleton = Step(BootstrapOutput(summary="skeleton"), write_marker)
+    fake.script(Role.IMPLEMENTER, skeleton)
+    patch_factories(monkeypatch, fake, FakeIO())
+    result = runner.invoke(app, ["bootstrap", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "Bootstrap: ran" in result.output
+    assert "0001-existing.md" in fake.requests_for(Role.IMPLEMENTER)[0].prompt
+    log = subprocess.run(
+        ["git", "log", "-1", "--format=%s"], cwd=tmp_path, capture_output=True, text=True
+    ).stdout.strip()
+    assert log == "chore(bootstrap): project skeleton"
 
 
 def test_brief_command_error_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

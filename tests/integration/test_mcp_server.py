@@ -22,6 +22,7 @@ EXPECTED_TOOLS = {
     "autodev_show",
     "autodev_check",
     "autodev_brief",
+    "autodev_bootstrap",
     "autodev_request",
     "autodev_discover",
     "autodev_approve",

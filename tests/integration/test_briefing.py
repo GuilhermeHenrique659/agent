@@ -58,6 +58,14 @@ def make_env(tmp_path: Path, *, existing_code: bool = False, gitignore: bool = T
     return Env(root, repo, FakeAgentRuntime())
 
 
+FLAG = ".agent/runs/ready"
+FLAG_SCRIPT = (
+    "import sys, pathlib; ok = pathlib.Path('.agent/runs/ready').exists(); "
+    "print('' if ok else 'flag missing'); sys.exit(0 if ok else 1)"
+)
+FLAG_CMD = f"{PY} -B -c {shlex.quote(FLAG_SCRIPT)}"
+
+
 def brief(test: str | None = TEST_CMD, title: str = "Use Python") -> TechBrief:
     return TechBrief(
         summary="A Python CLI",
@@ -189,6 +197,49 @@ def test_bootstrap_retries_on_top_of_failed_gates(tmp_path: Path) -> None:
         "docs: technical briefing",
     ]
     assert "Gate test failed" in env.runtime.requests_for(Role.IMPLEMENTER)[1].prompt
+
+
+def write_module(workdir: Path) -> None:
+    (workdir / "a.py").write_text("x = 1\n")
+
+
+def create_flag(workdir: Path) -> None:
+    (workdir / FLAG).parent.mkdir(parents=True, exist_ok=True)
+    (workdir / FLAG).write_text("ok")
+
+
+def test_bootstrap_no_change_after_kept_commit_reruns_gates_and_succeeds(tmp_path: Path) -> None:
+    env = make_env(tmp_path)
+    env.runtime.script(Role.ARCHITECT, brief_turn(brief(test=FLAG_CMD)))
+    env.runtime.script(
+        Role.IMPLEMENTER,
+        Step(BootstrapOutput(summary="skeleton"), write_module),
+        Step(BootstrapOutput(summary="nothing to change"), create_flag),
+    )
+    run(env, FakeIO("a"))
+    assert subjects(env.root)[:2] == [
+        "chore(bootstrap): project skeleton",
+        "docs: technical briefing",
+    ]
+    assert len(env.runtime.requests_for(Role.IMPLEMENTER)) == 2
+
+
+def test_bootstrap_no_change_failure_reports_gate_output(tmp_path: Path) -> None:
+    env = make_env(tmp_path)
+    env.runtime.script(Role.ARCHITECT, brief_turn(brief(test=FLAG_CMD)))
+    env.runtime.script(
+        Role.IMPLEMENTER,
+        Step(BootstrapOutput(summary="skeleton"), write_module),
+        Step(BootstrapOutput(summary="nothing")),
+        Step(BootstrapOutput(summary="nothing")),
+    )
+    with pytest.raises(RunError) as excinfo:
+        run(env, FakeIO("a"))
+    message = str(excinfo.value)
+    assert "flag missing" in message
+    assert "made no changes, but the gates still fail" in message
+    assert subjects(env.root)[0] == "docs: technical briefing"
+    assert not (env.root / "a.py").exists()
 
 
 def test_brief_requires_main_and_clean_tree(tmp_path: Path) -> None:

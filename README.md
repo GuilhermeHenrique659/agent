@@ -1,0 +1,98 @@
+# autodev
+
+CLI em Python que orquestra agentes de IA para construir software. Ele leva um pedido (funcionalidade, correção ou melhoria) até o merge na branch principal. No caminho, entende o domínio com você, quebra o trabalho em stories, implementa com TDD e valida com gates automáticos e revisão por agentes.
+
+> **Status:** em desenvolvimento. Hoje funcionam `autodev init`, `autodev status` e `autodev check`. O pipeline com agentes está no [roadmap](#roadmap).
+
+## Como funciona
+
+```
+Pedido → Discovery → Refinamento → [você aprova] → Implementação (TDD) → Gates → Revisão → QA → Merge → Pronto
+```
+
+- **Discovery:** conversa com você usando linguagem ubíqua e event storming para entender o problema. Em projeto vazio, faz também o briefing técnico (stack e arquitetura). Se o pedido exigir novos componentes, revisa a arquitetura e registra um ADR.
+- **Refinamento:** monta a story com critérios de aceite e a divide em tasks pequenas. Este é o único ponto em que o processo para e espera a sua aprovação.
+- **Implementação:** subagentes escrevem o teste primeiro e depois o código. O próprio autodev verifica que o teste falhou antes da implementação e passou depois.
+- **Gates:** build, testes e lint precisam passar, sem exceção. Depois, um agente revisa o diff contra os padrões e ADRs do projeto.
+- **QA:** confere os critérios de aceite e devolve para correção quando algo falha. Depois de um número configurável de tentativas, a story é bloqueada e espera você.
+- **Merge:** cada story tem uma branch própria. O autodev faz rebase na branch principal, resolve conflitos, roda os gates de novo e faz o merge.
+- **Auto-melhoria:** de tempos em tempos, analisa as execuções e o código e propõe melhorias no processo e refatorações. Ele só propõe, nunca aplica sozinho.
+
+Tudo roda localmente. O git é usado apenas para branch, commit, push, pull e resolução de conflitos.
+
+## Instalação
+
+Requer Python 3.12+ e [uv](https://docs.astral.sh/uv/).
+
+```bash
+git clone <repo> autodev && cd autodev
+uv sync
+uv run autodev --help
+```
+
+## Uso
+
+```bash
+uv run autodev init /caminho/do/projeto     # cria /caminho/do/projeto/.agent/
+uv run autodev status /caminho/do/projeto   # lista as stories do backlog
+uv run autodev check /caminho/do/projeto    # roda os gates de build, testes e lint
+```
+
+## Configuração
+
+Toda a configuração fica em documentos na pasta `.agent/` do projeto-alvo:
+
+| Caminho | Para quê |
+|---|---|
+| `config.yaml` | comandos de build/test/lint, git, limites e agentes por papel |
+| `knowledge/` | documentação do projeto que os agentes leem como contexto |
+| `domain/glossary.md` | linguagem ubíqua |
+| `domain/events.md` | resultado do event storming |
+| `architecture/adr/` | decisões de arquitetura |
+| `standards/` | padrões de código aplicados na revisão e nas regras de lint |
+| `process/` | prompts que substituem os embutidos, por papel (ex.: `implementer.md`) |
+| `backlog/` | stories (`S-0001.md`) |
+| `runs/` | logs das execuções |
+
+### Agentes
+
+Cada papel (`discovery`, `architect`, `refiner`, `test_writer`, `implementer`, `reviewer`, `qa`, `merger`, `improver`) pode ter modelo, esforço, limite de turnos, ferramentas e prompt próprios:
+
+```yaml
+agents:
+  defaults:
+    model: claude-opus-5-5
+    effort: high          # low | medium | high | xhigh | max
+    max_turns: 50
+  roles:
+    implementer:
+      model: claude-sonnet-5-5
+      effort: medium
+    reviewer:
+      tools: [Read, Grep, Glob, Bash]
+```
+
+Cada campo segue a precedência: valor do papel → `defaults` → padrão embutido. Chaves desconhecidas são rejeitadas, então erros de digitação falham logo no carregamento.
+
+## Roadmap
+
+| Fase | Entrega | Status |
+|---|---|---|
+| 1 | Esqueleto, configuração, domínio Story/Task, backlog, `init`/`status` | ✅ |
+| 2 | Gates de build/test/lint, git, gate de TDD, `autodev check` | ✅ |
+| 3 | Runtime de agentes (Claude Agent SDK), implementação e revisão, `autodev run` | próximo |
+| 4 | Discovery interativo e refinamento, `autodev approve` | |
+| 5 | QA, retrabalho, merge e conflitos | |
+| 6 | Briefing técnico e revisão de arquitetura com ADRs | |
+| 7 | `autodev improve` e regras de lint a partir de `standards/` | |
+| depois | RAG, PR no GitHub, tasks em paralelo, Jira | |
+
+## Desenvolvimento
+
+```bash
+uv run pytest                     # testes
+uv run ruff check . && uv run ruff format --check .
+uv run mypy                       # strict
+```
+
+O contexto de design para quem for contribuir (incluindo agentes) está em [AGENTS.md](AGENTS.md).

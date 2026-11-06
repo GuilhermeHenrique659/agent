@@ -1,0 +1,69 @@
+# autodev project configuration.
+
+# Shell commands the quality gates run. null = skipped.
+commands:
+  build: null  # e.g. "npm run build"; compiles/builds the project
+  test: null   # e.g. "pytest"; runs the test suite
+  lint: null   # e.g. "ruff check ."; runs linters/type checks
+
+git:
+  main_branch: main
+  remote: null
+
+limits:
+  max_attempts: 3  # review/QA rejections before a story is blocked
+  command_timeout_s: 900  # max seconds for each build/test/lint command
+
+# Files matching these globs (fnmatch on the repo-relative path; * also matches /) are test files.
+# A red commit may only touch test files, a green commit may not touch them.
+tdd:
+  test_globs:
+    - "tests/*"
+    - "test/*"
+    - "*/tests/*"
+    - "*/test/*"
+    - "test_*.py"
+    - "*/test_*.py"
+    - "*_test.py"
+    - "*_test.go"
+    - "*.test.*"
+    - "*.spec.*"
+
+# effort is one of low|medium|high|xhigh|max.
+# `prompt` may point to a file in process/ (path relative to .agent/) to override the built-in prompt.
+# `tools` restricts the tool set; omit it for the runtime default.
+agents:
+  defaults:
+    model: claude-opus-5-5
+    effort: high
+    max_turns: 50
+  roles:
+    discovery:
+      model: claude-opus-5-5
+      effort: high
+    architect:
+      model: claude-opus-5-5
+      effort: xhigh
+    refiner:
+      model: claude-opus-5-5
+      effort: high
+    test_writer:
+      model: claude-sonnet-5-5
+      effort: medium
+    implementer:
+      model: claude-sonnet-5-5
+      effort: medium
+    reviewer:
+      model: claude-opus-5-5
+      effort: high
+      tools: [Read, Grep, Glob, Bash]
+    qa:
+      model: claude-opus-5-5
+      effort: high
+      tools: [Read, Grep, Glob, Bash]
+    merger:
+      model: claude-sonnet-5-5
+      effort: medium
+    improver:
+      model: claude-opus-5-5
+      effort: high

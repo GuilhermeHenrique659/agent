@@ -16,6 +16,7 @@ from autodev.pipeline.outputs import (
     DiscoveryTurn,
     GlossaryEntry,
     ImplementerOutput,
+    QaOutput,
     RefinedTask,
     RefinementOutput,
     ReviewOutput,
@@ -153,11 +154,12 @@ def test_run_prints_final_status_with_fake_runtime(
     )
     fake.script(Role.IMPLEMENTER, Step(ImplementerOutput(summary="i"), write_impl))
     fake.script(Role.REVIEWER, Step(ReviewOutput(approved=True, summary="ok", findings=[])))
+    fake.script(Role.QA, Step(QaOutput(approved=True, summary="ok")))
     monkeypatch.setattr(cli, "make_runtime", lambda config, root: fake)
     result = runner.invoke(app, ["run", "S-0001", "--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
-    assert "in_qa" in result.output
-    assert StoryStore(tmp_path).get("S-0001").status == StoryStatus.IN_QA
+    assert "done" in result.output
+    assert StoryStore(tmp_path).get("S-0001").status == StoryStatus.DONE
 
 
 def test_run_unknown_story_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -325,4 +327,38 @@ def test_show_command(tmp_path: Path) -> None:
     for expected in ("Pay", "As a buyer", "Given a cart", "T1", "refined"):
         assert expected in result.output
     missing = runner.invoke(app, ["show", "S-9999", "--path", str(tmp_path)])
+    assert missing.exit_code == 1
+
+
+def test_discover_command_runs_discovery_on_draft_story(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup_git_project(tmp_path)
+    StoryStore(tmp_path).save(
+        Story("S-0001", "Add logging", description="Add logging\n\nSuggested by QA.")
+    )
+    fake = FakeAgentRuntime()
+    fake.script(Role.DISCOVERY, discovery_done())
+    fake.script(Role.REFINER, Step(refined_output()))
+    io = FakeIO("l")
+    patch_factories(monkeypatch, fake, io)
+    result = runner.invoke(app, ["discover", "S-0001", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "Suggested by QA." in fake.messages_for(Role.DISCOVERY)[0]
+    story = StoryStore(tmp_path).get("S-0001")
+    assert story.status == StoryStatus.REFINED
+    assert story.title == "Refined"
+    assert "autodev approve S-0001" in result.output
+    assert io.prompts == ["[a]pprove, [f]eedback, [l]ater"]
+
+
+def test_discover_rejects_non_draft_story(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    refined_story(tmp_path)
+    fake = FakeAgentRuntime()
+    patch_factories(monkeypatch, fake, FakeIO())
+    result = runner.invoke(app, ["discover", "S-0001", "--path", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "draft" in result.output
+    assert fake.requests == []
+    missing = runner.invoke(app, ["discover", "S-9999", "--path", str(tmp_path)])
     assert missing.exit_code == 1

@@ -180,3 +180,23 @@ def test_commit_paths_stages_only_given_paths_and_returns_none_without_changes(
     ).stdout
     assert " M README.md" in status and "?? other.txt" in status
     assert repo.commit_paths(["docs"], "again") is None
+
+
+def test_delete_branch(repo: GitRepo) -> None:
+    repo.create_branch("feature", "main")
+    write_commit(repo, "f.txt", "f", "feature work")
+    repo.checkout("main")
+    with pytest.raises(GitError):
+        repo.delete_branch("feature")  # unmerged: safe delete refuses
+    repo.merge_ff("feature")
+    repo.delete_branch("feature")
+    assert not repo.branch_exists("feature")
+
+
+def test_rebase_in_progress(repo: GitRepo) -> None:
+    assert not repo.rebase_in_progress()
+    conflicting_branches(repo)
+    assert not repo.rebase("main").ok
+    assert repo.rebase_in_progress()
+    repo.rebase_abort()
+    assert not repo.rebase_in_progress()

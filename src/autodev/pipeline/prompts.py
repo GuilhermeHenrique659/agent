@@ -5,7 +5,8 @@ from autodev.config.loader import ConfigError
 from autodev.config.models import AgentProfile
 from autodev.domain.role import Role
 from autodev.domain.story import Story, Task
-from autodev.pipeline.outputs import Finding
+from autodev.gates.runner import GateReport
+from autodev.pipeline.outputs import Finding, QaOutput
 
 MAX_FEEDBACK_CHARS = 8000
 
@@ -20,8 +21,12 @@ def load_instructions(role: Role, profile: AgentProfile, agent_dir: Path) -> str
     return resource.read_text()
 
 
+def _criteria(story: Story) -> str:
+    return "\n".join(f"- {c}" for c in story.acceptance_criteria)
+
+
 def _story_section(story: Story) -> str:
-    criteria = "\n".join(f"- {c}" for c in story.acceptance_criteria)
+    criteria = _criteria(story)
     return (
         f"Story {story.id}: {story.title}\n\n"
         f"Description:\n{story.description.strip()}\n\n"
@@ -120,3 +125,59 @@ def build_refiner_prompt(story: Story, context: list[Path], feedback: str | None
     if feedback:
         prompt += f"\n\nFeedback to apply:\n{feedback[-MAX_FEEDBACK_CHARS:]}"
     return prompt
+
+
+def build_qa_prompt(story: Story, base_branch: str, context: list[Path]) -> str:
+    return (
+        "Run QA on this story: verify every acceptance criterion with evidence. "
+        f"The changes are in `git diff {base_branch}...HEAD`.\n\n"
+        f"{_story_section(story)}\n\n"
+        f"Base branch: {base_branch}\n\n{_context_section(context)}"
+    )
+
+
+def build_qa_fix_prompt(
+    story: Story,
+    base_branch: str,
+    context: list[Path],
+    qa: QaOutput,
+    feedback: str | None = None,
+) -> str:
+    issues = "\n".join(f"- [{i.severity}] {i.message}" for i in qa.issues)
+    unmet = "\n".join(f"- {c.criterion}: {c.evidence}" for c in qa.criteria if not c.met)
+    return (
+        "QA did not approve this story. Fix the issues and the unmet acceptance criteria below.\n\n"
+        f"{_story_section(story)}\n\n"
+        f"Base branch: {base_branch}\n\n"
+        f"QA summary:\n{qa.summary}\n\nIssues:\n{issues or '- (none)'}\n\n"
+        f"Unmet criteria:\n{unmet or '- (none)'}\n\n"
+        f"{_context_section(context)}{_feedback_section(feedback)}"
+    )
+
+
+def build_merge_prompt(story: Story, conflicted_files: list[str], feedback: str | None) -> str:
+    listed = "\n".join(f"- {f}" for f in conflicted_files)
+    return (
+        "Rebasing this story branch onto the main branch produced conflicts. Resolve the "
+        "conflict markers in each file below, keeping the intent of both sides and the story's "
+        "acceptance criteria.\n\n"
+        f"Story {story.id}: {story.title}\n\n"
+        f"Acceptance criteria:\n{_criteria(story)}\n\n"
+        f"Conflicted files:\n{listed}{_feedback_section(feedback)}"
+    )
+
+
+def build_merge_fix_prompt(
+    story: Story, base_branch: str, context: list[Path], feedback: str | None
+) -> str:
+    return (
+        "The quality gates fail after rebasing this story onto the main branch. "
+        "Fix what the output below reports.\n\n"
+        f"{_story_section(story)}\n\n"
+        f"Base branch: {base_branch}\n\n"
+        f"{_context_section(context)}{_feedback_section(feedback)}"
+    )
+
+
+def gate_feedback(report: GateReport) -> str:
+    return "\n".join(f"Gate {r.name} failed:\n{r.output}" for r in report.failures)

@@ -3,22 +3,35 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from autodev.adapters.git import GitRepo
+from autodev.adapters.git import GitError, GitRepo
 from autodev.config.models import ProjectConfig
 from autodev.domain.role import Role
 from autodev.domain.story import Story, StoryStatus, Task, TaskStatus
 from autodev.gates.runner import GateReport, GateResult, run_gates
 from autodev.gates.tdd import TddGuard, is_test_file
 from autodev.pipeline import prompts
-from autodev.pipeline.outputs import ImplementerOutput, ReviewOutput, TestWriterOutput
+from autodev.pipeline.merge import MergeFailed, Merger
+from autodev.pipeline.outputs import (
+    ImplementerOutput,
+    MergeOutput,
+    QaOutput,
+    ReviewOutput,
+    TestWriterOutput,
+)
 from autodev.pipeline.run_log import RunLog
 from autodev.pipeline.state_store import StoryStore
 from autodev.ports.agent_runtime import AgentError, AgentRequest, AgentRuntime
 from autodev.ports.context_source import ContextSource
 
-_RESUMABLE = (StoryStatus.APPROVED, StoryStatus.IN_PROGRESS, StoryStatus.IN_REVIEW)
+_RESUMABLE = (
+    StoryStatus.APPROVED,
+    StoryStatus.IN_PROGRESS,
+    StoryStatus.IN_REVIEW,
+    StoryStatus.IN_QA,
+)
 _STATE_DIRS = (".agent/backlog/", ".agent/runs/")
 _LOG_DETAIL_CHARS = 2000
+_TITLE_CHARS = 60
 
 
 class RunError(Exception):
@@ -56,12 +69,12 @@ class StoryRunner:
         except KeyError as exc:
             raise RunError(f"Story {story_id} not found") from exc
         self._check_state_ignored()
-        if story.status in (StoryStatus.IN_QA, StoryStatus.DONE):
+        if story.status == StoryStatus.DONE:
             return story
         if story.status not in _RESUMABLE:
             raise RunError(
                 f"Story {story.id} is {story.status.value}; "
-                "only approved, in_progress or in_review stories can be run"
+                "only approved, in_progress, in_review or in_qa stories can be run"
             )
         if self._repo.has_changes():
             raise RunError("Working tree has uncommitted changes; commit or discard them first")
@@ -106,7 +119,7 @@ class StoryRunner:
                     await self._green(story, task)
                     task.complete()
                     self._save(story)
-            await self._review_loop(story)
+            await self._quality_loop(story)
         except _Failed as failure:
             self._block(story, str(failure))
 
@@ -197,6 +210,7 @@ class StoryRunner:
         *,
         first_prefix: str,
         tdd: bool,
+        label: str = "review",
     ) -> None:
         """Run the implementer until the checks pass or the attempt budget is spent.
 
@@ -206,7 +220,7 @@ class StoryRunner:
         feedback: str | None = None
         committed = False
         globs = self._config.tdd.test_globs
-        what = task.id if task else "review"
+        what = task.id if task else label
         for _ in range(self._config.limits.max_attempts):
             before = self._repo.head()
             out = await self._agent(
@@ -238,7 +252,7 @@ class StoryRunner:
             self._log_report(task, report)
             if report.ok:
                 return
-            feedback = _gate_feedback(report)
+            feedback = prompts.gate_feedback(report)
         raise _Failed(f"{what}: implementation failed. {feedback}")
 
     def _log_report(self, task: Task | None, report: GateReport) -> None:
@@ -253,40 +267,131 @@ class StoryRunner:
             detail=detail[-_LOG_DETAIL_CHARS:],
         )
 
-    # -- review ------------------------------------------------------------
+    # -- review / QA / merge -----------------------------------------------
 
-    async def _review_loop(self, story: Story) -> None:
+    async def _quality_loop(self, story: Story) -> None:
         base = self._config.git.main_branch
         max_attempts = self._config.limits.max_attempts
         while True:
             if story.status == StoryStatus.IN_PROGRESS:
                 story.advance(StoryStatus.IN_REVIEW)
                 self._save(story)
-            prompt = prompts.build_reviewer_prompt(story, base, self._context_paths())
-            out = await self._agent(Role.REVIEWER, prompt, ReviewOutput, None)
-            if isinstance(out, str):
-                raise _Failed(f"Review failed. {out}")
-            self._log.append("review", ok=out.approved, detail=out.summary)
-            if out.approved:
-                story.advance(StoryStatus.IN_QA)
-                self._save(story)
-                return
-            story.send_back(reason=out.summary, max_attempts=max_attempts)
-            self._save(story)
-            if story.status == StoryStatus.BLOCKED:
-                self._log.append("story_blocked", detail=out.summary)
-                return
-            review = out
+            if story.status == StoryStatus.IN_REVIEW:
+                prompt = prompts.build_reviewer_prompt(story, base, self._context_paths())
+                out = await self._agent(Role.REVIEWER, prompt, ReviewOutput, None)
+                if isinstance(out, str):
+                    raise _Failed(f"Review failed. {out}")
+                self._log.append("review", ok=out.approved, detail=out.summary)
+                if out.approved:
+                    story.advance(StoryStatus.IN_QA)
+                    self._save(story)
+                else:
+                    story.send_back(reason=out.summary, max_attempts=max_attempts)
+                    self._save(story)
+                    if _is_blocked(story):
+                        self._log.append("story_blocked", detail=out.summary)
+                        return
+                    review = out
 
-            def build(feedback: str | None, review: ReviewOutput = review) -> str:
-                return prompts.build_review_fix_prompt(
-                    story, base, self._context_paths(), review.summary, review.findings, feedback
-                )
+                    def build_review_fix(
+                        feedback: str | None, review: ReviewOutput = review
+                    ) -> str:
+                        return prompts.build_review_fix_prompt(
+                            story,
+                            base,
+                            self._context_paths(),
+                            review.summary,
+                            review.findings,
+                            feedback,
+                        )
+
+                    await self._implement(
+                        None,
+                        build_review_fix,
+                        "(review): address review findings",
+                        first_prefix="fix",
+                        tdd=False,
+                    )
+                    continue
+            prompt = prompts.build_qa_prompt(story, base, self._context_paths())
+            qa = await self._agent(Role.QA, prompt, QaOutput, None)
+            if isinstance(qa, str):
+                raise _Failed(f"QA failed. {qa}")
+            self._log.append("qa", ok=qa.approved, detail=qa.summary)
+            if qa.approved:
+                await self._merge(story)
+                # only after a successful merge, so a resumed run can't duplicate them
+                self._create_improvements(story, qa)
+                return
+            story.send_back(reason=qa.summary, max_attempts=max_attempts)
+            self._save(story)
+            if _is_blocked(story):
+                self._log.append("story_blocked", detail=qa.summary)
+                return
+
+            def build_qa_fix(feedback: str | None, qa: QaOutput = qa) -> str:
+                return prompts.build_qa_fix_prompt(story, base, self._context_paths(), qa, feedback)
 
             await self._implement(
-                None, build, "(review): address review findings", first_prefix="fix", tdd=False
+                None,
+                build_qa_fix,
+                "(qa): address QA findings",
+                first_prefix="fix",
+                tdd=False,
+                label="qa",
             )
 
+    def _create_improvements(self, story: Story, qa: QaOutput) -> None:
+        for improvement in qa.improvements:
+            draft = Story(
+                self._store.next_id(),
+                title=improvement.title[:_TITLE_CHARS],
+                description=(
+                    f"{improvement.description}\n\nSuggested by QA while delivering {story.id}."
+                ),
+            )
+            self._save(draft)
+            self._log.append("improvement_created", detail=draft.id)
 
-def _gate_feedback(report: GateReport) -> str:
-    return "\n".join(f"Gate {r.name} failed:\n{r.output}" for r in report.failures)
+    async def _merge(self, story: Story) -> None:
+        async def run_merger(prompt: str) -> MergeOutput | str:
+            return await self._agent(Role.MERGER, prompt, MergeOutput, None)
+
+        def run_story_gates() -> GateReport:
+            report = run_gates(self._config, self._root)
+            self._log_report(None, report)
+            return report
+
+        async def fix_gates(build: Callable[[str | None], str], message: str) -> None:
+            try:
+                await self._implement(
+                    None, build, message, first_prefix="fix", tdd=False, label="merge"
+                )
+            except _Failed as failure:
+                raise MergeFailed(str(failure)) from failure
+
+        merger = Merger(
+            self._config,
+            self._root,
+            self._repo,
+            self._log,
+            self._context_paths,
+            run_merger=run_merger,
+            run_gates=run_story_gates,
+            fix_gates=fix_gates,
+        )
+        try:
+            await merger.merge(story)
+        except MergeFailed as failure:
+            raise _Failed(str(failure)) from failure
+        story.advance(StoryStatus.DONE)
+        self._save(story)
+        self._log.append("story_done")
+        try:
+            self._repo.delete_branch(f"story/{story.id}")
+        except GitError as exc:
+            self._log.append("branch_delete_failed", detail=str(exc))
+
+
+def _is_blocked(story: Story) -> bool:
+    return story.status == StoryStatus.BLOCKED

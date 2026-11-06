@@ -112,6 +112,16 @@ class GitRepo:
     def rebase_abort(self) -> None:
         self._run("rebase", "--abort")
 
+    def rebase_in_progress(self) -> bool:
+        for name in ("rebase-merge", "rebase-apply"):
+            git_path = self._run("rev-parse", "--git-path", name).stdout.strip()
+            if (self.path / git_path).exists():
+                return True
+        return False
+
+    def delete_branch(self, name: str) -> None:
+        self._run("branch", "-d", name)
+
     def merge_ff(self, branch: str) -> None:
         self._run("merge", "--ff-only", branch)
 

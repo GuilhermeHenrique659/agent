@@ -35,6 +35,7 @@ Pedido → DISCOVERY → REFINAMENTO → [aprovação humana] → IMPLEMENTAÇÃ
 13. **Estado do orquestrador fora do git**: `.agent/backlog/` e `.agent/runs/` são ignorados via `.agent/.gitignore` (criado pelo `init`), senão o estado mudaria ao trocar de branch e sujaria os commits. `autodev run` recusa se não estiverem ignorados.
 14. **Settings/autenticação dos agentes** (`runtime` no config): por padrão só as settings do projeto-alvo (`setting_sources: [project]`). Quando a autenticação do Claude Code vem de um `apiKeyHelper` em `~/.claude/settings.json` (ex.: gateways corporativos), então é preciso `runtime.settings` (JSON mínimo, ex. só o `apiKeyHelper`; relativo a `.agent/`) ou `setting_sources: [user, project]` (herda também CLAUDE.md global, hooks, plugins). `cli_path` apontando para um wrapper do `claude` não funcionou (exit 71). Verificado só rodando de dentro de uma sessão do Claude Code. `max_budget_usd` opcional por papel.
 15. **Discovery/refinamento**: o orquestrador conduz o chat (cada turno é um `DiscoveryTurn` JSON); termina quando o agente devolve `done` + resultado, ou pelo `/done` do usuário, com teto `limits.max_discovery_turns`. Agentes de discovery/refiner são só leitura (Read/Grep/Glob) e devolvem dados; o **código** escreve glossary.md e events.md. Conversa e documentos no idioma do pedido. O `approve` exige estar na main e commita só `.agent/domain` e `.agent/architecture` (`docs(<id>): ...`) antes de gravar APPROVED.
+16. **QA e merge**: após o review aprovado, o QA verifica cada critério de aceite; reprovado → send_back (mesmo contador do review) → correção → review e QA de novo. Merge autônomo: pull (se `git.remote`), rebase na main, conflitos resolvidos pelo agente merger (o código confere que não restam marcadores; esgotou → `rebase --abort` → BLOCKED, main intacta), gates, `merge --ff-only`, push, DONE e `branch -d story/<id>`. Melhorias sugeridas pelo QA viram stories DRAFT **só depois do merge** (evita duplicar em retomadas); `autodev discover <id>` as leva ao discovery. Push falhou → BLOCKED com a main já mergeada localmente; o `resume` volta a IN_PROGRESS e refaz review/QA antes de tentar de novo.
 
 ## Estrutura do `.agent/` no projeto-alvo
 
@@ -54,11 +55,12 @@ runs/                logs de execução (alimentam a auto-melhoria)
 
 ```
 src/autodev/
-  cli.py               init | status | check | request | approve | refine | show | run | resume   (futuro: improve)
+  cli.py               init | status | check | request | discover | approve | refine | show | run | resume   (futuro: improve)
   config/              models.py (pydantic, extra="forbid"), loader.py (load_config, ConfigError)
   domain/              role.py (Role), story.py (Story, Task, StoryStatus, InvalidTransition)
   pipeline/            state_store.py (StoryStore: save/get/has/values/next_id)
-                       story_runner.py (StoryRunner: red → green → gates por task, depois review loop → IN_QA)
+                       story_runner.py (StoryRunner: red → green → gates por task → review ⇄ QA → merge → DONE)
+                       merge.py (Merger: pull, rebase, conflitos via agente merger, gates, ff-merge, push)
                        prompts.py (instruções por papel + builders dos prompts de tarefa)
                        outputs.py (saídas tipadas dos agentes), run_log.py (JSONL em .agent/runs/)
                        discovery.py (chat: DiscoveryTurn por turno, /done, limite de turnos), refinement.py
@@ -72,7 +74,7 @@ src/autodev/
   adapters/            git.py (GitRepo: ... reset_hard, is_ignored), claude_sdk_runtime.py (build_options, deny_git_hook),
                        git_guard.py (is_forbidden_git_command), knowledge_folder.py (ContextSource)
   adapters/console_io.py (UserIO no terminal)
-  futuro: file_queue_source, local_review, qa/merge, improve/
+  futuro: file_queue_source, local_review (GitHub PR), improve/
 tests/fakes.py         FakeAgentRuntime roteirizável (passos por papel, podem editar arquivos)
 ```
 
@@ -88,8 +90,8 @@ Regras da `Story` (em `domain/story.py`): avanço só pela cadeia `draft→disco
 | 2 | Gates build/test/lint, adapter git, gate TDD red→green (sem LLM), `autodev check` | ✅ feito |
 | 3 | `ClaudeSdkRuntime` + `FakeAgentRuntime`, implementação e revisão por agente, `autodev run <story>`, `autodev resume` | ✅ feito (teste live passou) |
 | 4 | Discovery interativo (UL, event storming) + refinamento + `request`/`approve`/`refine`/`show` | ✅ feito (discovery ainda não testado com o modelo real) |
-| 5 | QA, loop de retrabalho → BLOCKED, merge e conflitos → DONE | próximo |
-| 6 | Briefing técnico (projeto vazio) e revisão de arquitetura/ADRs | |
+| 5 | QA, loop de retrabalho → BLOCKED, merge e conflitos → DONE, `autodev discover` | ✅ feito |
+| 6 | Briefing técnico (projeto vazio) e revisão de arquitetura/ADRs | próximo |
 | 7 | `autodev improve` (retro + refatoração) e geração de regras de lint a partir de `standards/` | |
 | depois | RAG, PR no GitHub, worktrees/paralelismo, Jira | |
 

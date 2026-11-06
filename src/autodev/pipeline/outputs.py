@@ -66,3 +66,32 @@ class RefinementOutput(BaseModel):
     user_story: str
     acceptance_criteria: list[str] = Field(min_length=1)
     tasks: list[RefinedTask] = Field(min_length=1)
+
+
+class CriterionCheck(BaseModel):
+    criterion: str
+    met: bool
+    evidence: str
+
+
+class QaIssue(BaseModel):
+    severity: Literal["blocking", "minor"]
+    message: str
+
+
+class Improvement(BaseModel):
+    title: str
+    description: str
+
+
+class QaOutput(BaseModel):
+    approved: bool
+    summary: str
+    criteria: list[CriterionCheck] = []
+    issues: list[QaIssue] = []
+    improvements: list[Improvement] = []
+
+
+class MergeOutput(BaseModel):
+    summary: str
+    resolved_files: list[str] = []

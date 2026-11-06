@@ -19,7 +19,7 @@ from autodev.domain.story import InvalidTransition, Story, StoryStatus
 from autodev.gates.runner import run_gates
 from autodev.pipeline.approval import approve_story
 from autodev.pipeline.refinement import refine_story
-from autodev.pipeline.request_flow import handle_request
+from autodev.pipeline.request_flow import discover_and_refine, handle_request
 from autodev.pipeline.run_log import RunLog
 from autodev.pipeline.state_store import StoryStore
 from autodev.pipeline.story_docs import render_story_summary
@@ -128,7 +128,7 @@ def _print_final_status(story: Story) -> None:
 
 @app.command()
 def run(story_id: str, path: PathOpt = Path()) -> None:
-    """Implement an approved story (TDD per task), then review it, up to IN_QA."""
+    """Implement an approved story (TDD per task), review, QA and merge it into main."""
     try:
         config = load_config(path)
         story = _run_story(config, path, make_runtime(config, path), story_id)
@@ -181,6 +181,40 @@ def request(
                 context=KnowledgeFolder(path),
                 io=io,
                 log_factory=lambda sid: RunLog(path, sid),
+            )
+        )
+        _review_loop(story, config, path, runtime, io, store)
+    except (ConfigError, RunError) as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+
+@app.command()
+def discover(story_id: str, path: PathOpt = Path()) -> None:
+    """Run discovery and refinement on a DRAFT story (e.g. one suggested by QA), then approve it."""
+    try:
+        config = load_config(path)
+        store = StoryStore(path)
+        try:
+            story = store.get(story_id)
+        except KeyError as exc:
+            raise RunError(f"Story {story_id} not found") from exc
+        if story.status != StoryStatus.DRAFT:
+            raise RunError(
+                f"Story {story.id} is {story.status.value}; only draft stories can be discovered"
+            )
+        runtime = make_runtime(config, path)
+        io = make_io()
+        asyncio.run(
+            discover_and_refine(
+                story,
+                config=config,
+                project_root=path,
+                runtime=runtime,
+                store=store,
+                context=KnowledgeFolder(path),
+                io=io,
+                log=RunLog(path, story.id),
             )
         )
         _review_loop(story, config, path, runtime, io, store)

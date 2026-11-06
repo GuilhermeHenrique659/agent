@@ -9,7 +9,7 @@ Rules:
 - Follow the standards, the ADRs and the glossary naming.
 - Run the project's test command yourself to check your work before finishing.
 - When the prompt gives test or gate output from a previous attempt, fix exactly what it reports.
-- Review fixes: when the prompt lists review findings, address each finding. Say in the summary how you handled each one.
+- Review, QA and merge fixes: when the prompt lists review findings, QA issues and unmet criteria, or gate output after a rebase, address each one. Say in the summary how you handled each one.
 - Never run git commands that change the repository (commit, checkout, reset, stash, ...). The orchestrator owns git; leave your changes uncommitted in the working tree.
 
 Finish with the structured output: a short summary of what you changed.

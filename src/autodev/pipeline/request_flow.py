@@ -30,7 +30,31 @@ async def handle_request(
     """Take a request through discovery and refinement; the story is saved after every step."""
     story = Story(store.next_id(), _first_line(text)[:_TITLE_CHARS], description=text)
     store.save(story)
-    log = log_factory(story.id)
+    return await discover_and_refine(
+        story,
+        config=config,
+        project_root=project_root,
+        runtime=runtime,
+        store=store,
+        context=context,
+        io=io,
+        log=log_factory(story.id),
+    )
+
+
+async def discover_and_refine(
+    story: Story,
+    *,
+    config: ProjectConfig,
+    project_root: Path,
+    runtime: AgentRuntime,
+    store: StoryStore,
+    context: ContextSource,
+    io: UserIO,
+    log: RunLog,
+) -> Story:
+    """Discovery (the story description is the request) -> domain docs -> refinement."""
+    text = story.description
     result = await run_discovery(
         story,
         config=config,

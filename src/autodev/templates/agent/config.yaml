@@ -48,6 +48,8 @@ improve:
 # `prompt` may point to a file in process/ (path relative to .agent/) to override the built-in prompt.
 # `tools` is the only set of tools the agent can use; roles without `tools` get
 # [Read, Write, Edit, Glob, Grep, Bash]. An explicit [] means no tools.
+# `skills` is `all`, a list of skill names, or omitted for none. Skills come from the project's
+# .claude/skills/, and from ~/.claude only if `runtime.setting_sources` includes `user`.
 # `max_budget_usd` caps the spend of a single agent run; omit it for no cap.
 agents:
   defaults:
@@ -71,9 +73,11 @@ agents:
     test_writer:
       model: claude-sonnet-5-5
       effort: medium
+      skills: all
     implementer:
       model: claude-sonnet-5-5
       effort: medium
+      skills: all
     reviewer:
       model: claude-opus-5-5
       effort: high

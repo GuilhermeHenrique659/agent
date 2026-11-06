@@ -20,6 +20,9 @@ class Effort(StrEnum):
     MAX = "max"
 
 
+Skills = list[str] | Literal["all"]  # a list of skill names, or every discovered skill
+
+
 class AgentProfile(BaseModel):
     model_config = _STRICT
 
@@ -29,6 +32,7 @@ class AgentProfile(BaseModel):
     tools: list[str]
     max_budget_usd: float | None
     prompt: str | None
+    skills: Skills | None
 
 
 class AgentOverride(BaseModel):
@@ -40,6 +44,7 @@ class AgentOverride(BaseModel):
     tools: list[str] | None = None
     max_budget_usd: float | None = Field(default=None, gt=0)
     prompt: str | None = None
+    skills: Skills | None = None
 
 
 class AgentsConfig(BaseModel):
@@ -68,6 +73,7 @@ class AgentsConfig(BaseModel):
                 specific.max_budget_usd if specific.max_budget_usd is not None else d.max_budget_usd
             ),
             prompt=specific.prompt if specific.prompt is not None else d.prompt,
+            skills=specific.skills if specific.skills is not None else d.skills,
         )
 
 

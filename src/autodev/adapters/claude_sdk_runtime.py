@@ -43,12 +43,26 @@ def build_options[T: BaseModel](
     setting_sources: Sequence[SettingSource] = ("project",),
 ) -> ClaudeAgentOptions:
     profile = request.profile
+    skills = profile.skills if profile.skills is not None else []
+    tools = list(profile.tools)
+    allowed_tools = list(profile.tools)
+    sources = list(setting_sources)
+    if skills:
+        # The SDK adds Skill / Skill(name) to --allowedTools only, so the base set needs it too.
+        # For a list, the SDK adds the Skill(name) rules itself; a bare "Skill" would allow all.
+        if "Skill" not in tools:
+            tools.append("Skill")
+        if skills == "all" and "Skill" not in allowed_tools:
+            allowed_tools.append("Skill")
+        if "project" not in sources:
+            sources.append("project")
     return ClaudeAgentOptions(
         model=profile.model,
         effort=profile.effort.value,
         max_turns=profile.max_turns,
-        tools=list(profile.tools),
-        allowed_tools=list(profile.tools),
+        tools=tools,
+        allowed_tools=allowed_tools,
+        skills=skills,
         permission_mode="dontAsk",
         cwd=request.workdir,
         system_prompt={
@@ -62,7 +76,7 @@ def build_options[T: BaseModel](
         },
         max_budget_usd=profile.max_budget_usd,
         settings=settings,
-        setting_sources=list(setting_sources),
+        setting_sources=sources,
         hooks={"PreToolUse": [HookMatcher(matcher="Bash", hooks=[deny_git_hook])]},
     )
 

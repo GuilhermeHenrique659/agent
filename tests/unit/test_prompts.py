@@ -9,6 +9,8 @@ from autodev.domain.story import Story, Task
 from autodev.pipeline.outputs import CriterionCheck, Finding, QaIssue, QaOutput
 from autodev.pipeline.prompts import (
     MAX_FEEDBACK_CHARS,
+    PRECEDENCE,
+    build_brief_prompt,
     build_code_scan_prompt,
     build_implementer_prompt,
     build_merge_fix_prompt,
@@ -51,7 +53,8 @@ def test_profile_prompt_overrides_builtin(tmp_path: Path) -> None:
     (tmp_path / "process").mkdir()
     (tmp_path / "process" / "impl.md").write_text("custom instructions")
     profile = profile_for(Role.IMPLEMENTER, "process/impl.md")
-    assert load_instructions(Role.IMPLEMENTER, profile, tmp_path) == "custom instructions"
+    text = load_instructions(Role.IMPLEMENTER, profile, tmp_path)
+    assert text.startswith("custom instructions")
 
 
 def test_missing_override_file_raises_config_error(tmp_path: Path) -> None:
@@ -141,12 +144,10 @@ def test_merge_fix_prompt_includes_gate_output() -> None:
 def test_process_override_file_used_when_present(tmp_path: Path) -> None:
     (tmp_path / "process").mkdir()
     (tmp_path / "process" / "implementer.md").write_text("convention override")
-    assert (
-        load_instructions(Role.IMPLEMENTER, profile_for(Role.IMPLEMENTER), tmp_path)
-        == "convention override"
-    )
+    text = load_instructions(Role.IMPLEMENTER, profile_for(Role.IMPLEMENTER), tmp_path)
+    assert text.startswith("convention override")
     builtin = load_instructions(Role.REVIEWER, profile_for(Role.REVIEWER), tmp_path)
-    assert builtin != "convention override"
+    assert not builtin.startswith("convention override")
 
 
 def test_profile_prompt_takes_precedence_over_process_file(tmp_path: Path) -> None:
@@ -154,7 +155,8 @@ def test_profile_prompt_takes_precedence_over_process_file(tmp_path: Path) -> No
     (tmp_path / "process" / "implementer.md").write_text("convention override")
     (tmp_path / "process" / "other.md").write_text("explicit")
     profile = profile_for(Role.IMPLEMENTER, "process/other.md")
-    assert load_instructions(Role.IMPLEMENTER, profile, tmp_path) == "explicit"
+    text = load_instructions(Role.IMPLEMENTER, profile, tmp_path)
+    assert text.startswith("explicit") and "convention override" not in text
 
 
 def test_process_retro_prompt_includes_stats_and_instructions() -> None:
@@ -176,3 +178,28 @@ def test_code_scan_prompt_includes_churn() -> None:
     assert "src/app.py" in prompt and "12" in prompt
     assert "src/util.py" in prompt
     assert ".agent/standards/stack.md" in prompt
+
+
+def test_precedence_section_appended_to_builtin(tmp_path: Path) -> None:
+    for role in (Role.IMPLEMENTER, Role.REVIEWER, Role.ARCHITECT):
+        text = load_instructions(role, profile_for(role), tmp_path)
+        assert text.endswith(PRECEDENCE)
+        assert text.count("## Precedence") == 1
+        assert "take precedence over any conflicting instruction" in text
+
+
+def test_precedence_section_appended_to_override_files(tmp_path: Path) -> None:
+    (tmp_path / "process").mkdir()
+    (tmp_path / "process" / "implementer.md").write_text("convention override")
+    (tmp_path / "process" / "other.md").write_text("explicit")
+    text = load_instructions(Role.IMPLEMENTER, profile_for(Role.IMPLEMENTER), tmp_path)
+    assert text.startswith("convention override") and text.endswith(PRECEDENCE)
+    profile = profile_for(Role.IMPLEMENTER, "process/other.md")
+    text = load_instructions(Role.IMPLEMENTER, profile, tmp_path)
+    assert text.startswith("explicit") and text.endswith(PRECEDENCE)
+
+
+def test_brief_prompt_mentions_project_conventions() -> None:
+    text = build_brief_prompt([], empty=False)
+    for expected in ("CLAUDE.md", "AGENTS.md", ".claude/rules/", "not restate"):
+        assert expected in text

@@ -289,3 +289,44 @@ def test_conversation_close_disconnects(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
     asyncio.run(scenario())
     assert FakeClient.instances[0].disconnects == 1
+
+
+def request_with_skills(tmp_path: Path, skills: Any) -> AgentRequest[Out]:
+    agents = AgentsConfig(
+        roles={Role.IMPLEMENTER: AgentOverride(tools=["Read", "Bash"], skills=skills)}
+    )
+    return AgentRequest(
+        role=Role.IMPLEMENTER,
+        profile=agents.profile_for(Role.IMPLEMENTER),
+        instructions="x",
+        prompt="y",
+        workdir=tmp_path,
+        output_model=Out,
+    )
+
+
+def test_build_options_without_skills_passes_empty_list(tmp_path: Path) -> None:
+    options = build_options(make_request(tmp_path))
+    assert options.skills == []
+    assert options.tools == ["Read", "Bash"]
+    assert options.allowed_tools == ["Read", "Bash"]
+
+
+def test_build_options_with_skills_enables_skill_tool(tmp_path: Path) -> None:
+    # The SDK only appends "Skill" to --allowedTools, not to --tools (subprocess_cli.py).
+    options = build_options(request_with_skills(tmp_path, "all"), setting_sources=["user", "local"])
+    assert options.skills == "all"
+    assert options.tools == ["Read", "Bash", "Skill"]
+    assert options.allowed_tools == ["Read", "Bash", "Skill"]
+    assert options.setting_sources == ["user", "local", "project"]
+    again = build_options(request_with_skills(tmp_path, "all"), setting_sources=["user", "project"])
+    assert again.setting_sources == ["user", "project"]
+
+
+def test_build_options_with_skill_list(tmp_path: Path) -> None:
+    options = build_options(request_with_skills(tmp_path, ["a", "b"]))
+    assert options.skills == ["a", "b"]
+    # Skill(name) specifiers are added to allowed_tools by the SDK; a bare "Skill" would allow all.
+    assert options.tools == ["Read", "Bash", "Skill"]
+    assert options.allowed_tools == ["Read", "Bash"]
+    assert options.setting_sources == ["project"]

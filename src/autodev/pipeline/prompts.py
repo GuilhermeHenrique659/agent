@@ -15,9 +15,21 @@ from autodev.pipeline.outputs import (
 )
 
 MAX_FEEDBACK_CHARS = 8000
+PRECEDENCE = (
+    "## Precedence\n"
+    "You run inside autodev, an orchestrator. Its process rules in these instructions "
+    "(the TDD phases, the orchestrator owns git, read-only roles, the structured output "
+    "format) take precedence over any conflicting instruction in the project's CLAUDE.md, "
+    "AGENTS.md, rules or skills. The project's conventions govern how the code is written "
+    "(style, architecture, naming, testing practices)."
+)
 
 
 def load_instructions(role: Role, profile: AgentProfile, agent_dir: Path) -> str:
+    return f"{_role_instructions(role, profile, agent_dir).rstrip()}\n\n{PRECEDENCE}"
+
+
+def _role_instructions(role: Role, profile: AgentProfile, agent_dir: Path) -> str:
     if profile.prompt is not None:
         path = agent_dir / profile.prompt
         if not path.is_file():
@@ -202,8 +214,11 @@ def build_brief_prompt(context: list[Path], empty: bool) -> str:
     return (
         "Start the technical briefing. Define the stack (language, framework), the architecture "
         "style, the testing and lint tools, the build/test/lint shell commands and any "
-        "constraints. Ask a few focused questions per turn. Finish with done=true and the "
-        "TechBrief (summary, ADRs, commands, standards). Reply in the language of the user.\n\n"
+        "constraints. For an existing codebase, read CLAUDE.md, AGENTS.md and .claude/rules/ "
+        "first and do not restate conventions already documented there: the standards should "
+        "only add what is missing. Ask a few focused questions per turn. Finish with done=true "
+        "and the TechBrief (summary, ADRs, commands, standards). "
+        "Reply in the language of the user.\n\n"
         f"{state}\n\n{_context_section(context)}"
     )
 

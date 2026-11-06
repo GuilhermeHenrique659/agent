@@ -662,3 +662,30 @@ def test_run_prints_improve_hint_when_threshold_reached(
     assert result.exit_code == 0, result.output
     assert "1 stories delivered since the last improvement" in result.output
     assert "autodev improve" in result.output
+
+
+HOOKS_JSON = '{"hooks": {"Stop": [], "PreToolUse": []}}'
+
+
+def test_init_warns_about_project_hooks(tmp_path: Path) -> None:
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(HOOKS_JSON)
+    result = runner.invoke(app, ["init", str(tmp_path)])
+    assert result.exit_code == 0
+    assert "Warning: this project defines Claude Code hooks (PreToolUse, Stop)" in result.output
+    assert "commit, push or switch branches" in result.output
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert "Warning" not in runner.invoke(app, ["init", str(plain)]).output
+
+
+def test_brief_warns_about_project_hooks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(HOOKS_JSON)
+    setup_git_project(tmp_path, adr=False, code=True)
+    fake = FakeAgentRuntime()
+    fake.script(Role.ARCHITECT, brief_step())
+    patch_factories(monkeypatch, fake, FakeIO("a"))
+    result = runner.invoke(app, ["brief", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "Warning: this project defines Claude Code hooks (PreToolUse, Stop)" in result.output

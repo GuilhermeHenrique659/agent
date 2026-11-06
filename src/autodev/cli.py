@@ -10,6 +10,7 @@ from rich.markdown import Markdown
 from rich.table import Table
 
 from autodev.adapters.claude_sdk_runtime import ClaudeSdkRuntime
+from autodev.adapters.claude_settings import project_hook_events
 from autodev.adapters.console_io import ConsoleIO
 from autodev.adapters.git import GitRepo
 from autodev.adapters.knowledge_folder import KnowledgeFolder
@@ -51,6 +52,17 @@ def init(path: PathArg = Path()) -> None:
     with as_file(files("autodev") / "templates" / "agent") as template:
         shutil.copytree(template, target)
     console.print(f"Created {target}")
+    _warn_about_hooks(path)
+
+
+def _warn_about_hooks(path: Path) -> None:
+    if events := project_hook_events(path):
+        console.print(
+            f"Warning: this project defines Claude Code hooks ({', '.join(events)}) in "
+            ".claude/settings.json. They also run inside autodev agent sessions; make sure "
+            "none of them commit, push or switch branches.",
+            markup=False,
+        )
 
 
 @app.command()
@@ -183,6 +195,7 @@ def brief(path: PathOpt = Path()) -> None:
     """Technical briefing: define stack and architecture, write ADRs, bootstrap an empty repo."""
     try:
         config = load_config(path)
+        _warn_about_hooks(path)
         _run_brief(config, path, make_runtime(config, path), make_io())
     except (ConfigError, RunError) as exc:
         err_console.print(f"[red]Error:[/red] {exc}")

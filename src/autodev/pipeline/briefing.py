@@ -118,6 +118,12 @@ async def _chat(
     )
 
 
+def _convention_files(project_root: Path) -> list[str]:
+    found = [Path(f) for f in ("CLAUDE.md", "AGENTS.md") if (project_root / f).is_file()]
+    found += (p.relative_to(project_root) for p in (project_root / ".claude/rules").rglob("*.md"))
+    return sorted({p.as_posix() for p in found})
+
+
 def _write_docs(brief: TechBrief, project_root: Path, repo: GitRepo, log: RunLog) -> str:
     for draft in brief.adrs:
         path = write_adr(project_root, draft, "Accepted")
@@ -125,7 +131,10 @@ def _write_docs(brief: TechBrief, project_root: Path, repo: GitRepo, log: RunLog
     standards = project_root / ".agent" / "standards"
     standards.mkdir(parents=True, exist_ok=True)
     bullets = "".join(f"- {s}\n" for s in brief.standards)
-    (standards / "stack.md").write_text(f"# Stack and standards\n\n{brief.summary}\n\n{bullets}")
+    stack = f"# Stack and standards\n\n{brief.summary}\n\n{bullets}"
+    if conventions := _convention_files(project_root):
+        stack += f"\nProject conventions also live in: {', '.join(conventions)}.\n"
+    (standards / "stack.md").write_text(stack)
     set_commands(project_root, brief.commands)
     try:
         repo.commit_paths(_DOC_PATHS, "docs: technical briefing")

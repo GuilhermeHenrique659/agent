@@ -1,7 +1,13 @@
 from pathlib import Path
 
 _DIRS = (".agent/knowledge", ".agent/standards", ".agent/architecture/adr")
-_FILES = (".agent/domain/glossary.md", ".agent/domain/events.md")
+_FILES = (
+    ".agent/domain/glossary.md",
+    ".agent/domain/events.md",
+    "CLAUDE.md",
+    "AGENTS.md",
+)
+_RULES_DIR = ".claude/rules"
 
 
 class KnowledgeFolder:
@@ -16,4 +22,5 @@ class KnowledgeFolder:
             if p.is_file() and p.name != ".gitkeep"
         ]
         found += [self._root / f for f in _FILES if (self._root / f).is_file()]
-        return sorted(p.relative_to(self._root) for p in found)
+        found += (self._root / _RULES_DIR).rglob("*.md")
+        return sorted({p.relative_to(self._root) for p in found if p.is_file()})

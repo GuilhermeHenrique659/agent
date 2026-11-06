@@ -191,4 +191,4 @@ def test_written_prompt_override_is_used_by_load_instructions(tmp_path: Path) ->
     retro(env, FakeIO("a"))
     config = load_config(env.root)
     profile = config.agents.profile_for(Role.REVIEWER)
-    assert load_instructions(Role.REVIEWER, profile, env.root / ".agent") == "REVIEW RULES"
+    assert load_instructions(Role.REVIEWER, profile, env.root / ".agent").startswith("REVIEW RULES")

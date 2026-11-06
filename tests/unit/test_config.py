@@ -177,3 +177,26 @@ def test_improve_defaults_and_template(tmp_path: Path) -> None:
     config = load_config(tmp_path)
     assert config.improve.every_n_stories == 5
     assert config.agents.profile_for(Role.IMPROVER).tools == ["Read", "Grep", "Glob"]
+
+
+def test_skills_resolution_and_template(tmp_path: Path) -> None:
+    from importlib.resources import files
+
+    text: Any = (files("autodev") / "templates" / "agent" / "config.yaml").read_text()
+    write_config(tmp_path, text)
+    agents = load_config(tmp_path).agents
+    assert agents.profile_for(Role.IMPLEMENTER).skills == "all"
+    assert agents.profile_for(Role.TEST_WRITER).skills == "all"
+    assert agents.profile_for(Role.REVIEWER).skills is None
+    write_config(
+        tmp_path,
+        "agents:\n  defaults:\n    skills: [a]\n"
+        "  roles:\n    qa:\n      skills: all\n    merger:\n      skills: []\n",
+    )
+    agents = load_config(tmp_path).agents
+    assert agents.profile_for(Role.QA).skills == "all"
+    assert agents.profile_for(Role.MERGER).skills == []
+    assert agents.profile_for(Role.REVIEWER).skills == ["a"]
+    write_config(tmp_path, "agents:\n  defaults:\n    skills: 3\n")
+    with pytest.raises(ConfigError, match="skills"):
+        load_config(tmp_path)

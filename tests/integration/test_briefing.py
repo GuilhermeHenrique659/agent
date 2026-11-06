@@ -214,3 +214,17 @@ def test_brief_without_test_command_raises_before_bootstrap(tmp_path: Path) -> N
         run(env, FakeIO("a"))
     assert env.runtime.requests_for(Role.IMPLEMENTER) == []
     assert subjects(env.root)[0] == "docs: technical briefing"
+
+
+def test_stack_md_references_existing_project_conventions(tmp_path: Path) -> None:
+    env = make_env(tmp_path, existing_code=True)
+    (env.root / "CLAUDE.md").write_text("rules")
+    (env.root / ".claude" / "rules").mkdir(parents=True)
+    (env.root / ".claude" / "rules" / "style.md").write_text("style")
+    env.repo.commit_all("add conventions")
+    env.runtime.script(Role.ARCHITECT, brief_turn())
+    run(env, FakeIO("a"))
+    stack = (env.root / ".agent/standards/stack.md").read_text()
+    assert stack.endswith("Project conventions also live in: .claude/rules/style.md, CLAUDE.md.\n")
+    first = env.runtime.messages_for(Role.ARCHITECT)[0]
+    assert "CLAUDE.md" in first and "not restate" in first

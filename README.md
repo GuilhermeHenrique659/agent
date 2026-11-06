@@ -48,6 +48,25 @@ uv run autodev improve --path /caminho      # retro do processo (métricas → p
 uv run autodev improve --lint --path /caminho  # regras de lint a partir de standards/ (→ story)
 ```
 
+## Usar num projeto existente
+
+```bash
+uv tool install --editable ~/Desktop/projects/agent   # uma vez; o comando `autodev` fica no PATH
+cd ~/caminho/do/projeto
+autodev init                                          # cria .agent/
+# edite .agent/config.yaml (autenticação, git.main_branch, git.remote: null no primeiro teste, max_budget_usd)
+git add .agent && git commit -m "chore: add autodev"
+autodev brief                                         # documenta stack, ADRs e comandos a partir do código
+autodev request "quero X"
+```
+
+Se o projeto já tem `CLAUDE.md`, `AGENTS.md`, `.claude/rules/` ou skills:
+
+- os agentes carregam o `CLAUDE.md` (o `AGENTS.md` só se o `CLAUDE.md` importar `@AGENTS.md`), e o reviewer/QA cobram essas convenções;
+- em conflito, o **processo do autodev vence** (TDD, git do orquestrador, papéis só leitura); as convenções do projeto governam o código;
+- skills do projeto valem por papel (`skills: all` em test_writer/implementer no template);
+- hooks em `.claude/settings.json` também rodam nas sessões dos agentes; o `init` avisa: garanta que nenhum faça commit, push ou troque de branch.
+
 ## Configuração
 
 Toda a configuração fica em documentos na pasta `.agent/` do projeto-alvo:

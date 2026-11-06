@@ -105,6 +105,17 @@ def test_build_options_maps_profile(tmp_path: Path) -> None:
     assert matcher.hooks == [deny_git_hook]
 
 
+def test_build_options_passes_runtime_settings(tmp_path: Path) -> None:
+    options = build_options(
+        make_request(tmp_path),
+        settings="/abs/auth.json",
+        setting_sources=["user", "project"],
+    )
+    assert options.settings == "/abs/auth.json"
+    assert options.setting_sources == ["user", "project"]
+    assert build_options(make_request(tmp_path)).settings is None
+
+
 def test_returns_validated_output_with_cost_and_turns(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

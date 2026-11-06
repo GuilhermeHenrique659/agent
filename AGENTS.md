@@ -33,7 +33,7 @@ Pedido → DISCOVERY → REFINAMENTO → [aprovação humana] → IMPLEMENTAÇÃ
 11. **Permissões dos agentes**: `permission_mode="dontAsk"` + só as ferramentas do perfil (`tools` resolvido; padrão Read/Write/Edit/Glob/Grep/Bash). Um hook PreToolUse nega comandos git que alteram o repositório: git é do orquestrador.
 12. **Falhas**: violação de regra do TDD (ou erro do agente) → `reset_hard` para antes da tentativa e repete com feedback; testes/gates falhando → mantém o commit e corrige em cima. Orçamento `limits.max_attempts` por fase (red/green) por task; esgotou → BLOCKED. Commits de correção de review podem tocar testes, mas passam pelos gates.
 13. **Estado do orquestrador fora do git**: `.agent/backlog/` e `.agent/runs/` são ignorados via `.agent/.gitignore` (criado pelo `init`), senão o estado mudaria ao trocar de branch e sujaria os commits. `autodev run` recusa se não estiverem ignorados.
-14. Agentes carregam só as settings do projeto-alvo (`setting_sources=["project"]`); `max_budget_usd` opcional por papel.
+14. **Settings/autenticação dos agentes** (`runtime` no config): por padrão só as settings do projeto-alvo (`setting_sources: [project]`). Quando a autenticação do Claude Code vem de um `apiKeyHelper` em `~/.claude/settings.json` (ex.: gateways corporativos), então é preciso `runtime.settings` (JSON mínimo, ex. só o `apiKeyHelper`; relativo a `.agent/`) ou `setting_sources: [user, project]` (herda também CLAUDE.md global, hooks, plugins). `cli_path` apontando para um wrapper do `claude` não funcionou (exit 71). Verificado só rodando de dentro de uma sessão do Claude Code. `max_budget_usd` opcional por papel.
 
 ## Estrutura do `.agent/` no projeto-alvo
 
@@ -81,7 +81,7 @@ Regras da `Story` (em `domain/story.py`): avanço só pela cadeia `draft→disco
 |---|---|---|
 | 1 | Esqueleto, config, domínio Story/Task, StoryStore, `init`/`status` | ✅ feito |
 | 2 | Gates build/test/lint, adapter git, gate TDD red→green (sem LLM), `autodev check` | ✅ feito |
-| 3 | `ClaudeSdkRuntime` + `FakeAgentRuntime`, implementação e revisão por agente, `autodev run <story>`, `autodev resume` | ✅ feito (teste live com o SDK real ainda não executado) |
+| 3 | `ClaudeSdkRuntime` + `FakeAgentRuntime`, implementação e revisão por agente, `autodev run <story>`, `autodev resume` | ✅ feito (teste live passou) |
 | 4 | Discovery interativo (UL, event storming) + refinamento + `autodev approve` | próximo |
 | 5 | QA, loop de retrabalho → BLOCKED, merge e conflitos → DONE | |
 | 6 | Briefing técnico (projeto vazio) e revisão de arquitetura/ADRs | |
@@ -102,7 +102,7 @@ uv run autodev init <path>                # gerar .agent/ num projeto
 uv run autodev check <path>               # rodar os gates build/test/lint
 uv run autodev run S-0001 --path <path>   # implementar uma story aprovada (chama o modelo!)
 uv run autodev resume S-0001 --path <path>
-uv run pytest -m live                     # teste com o SDK real (custa tokens; excluído por padrão)
+AUTODEV_LIVE_SETTING_SOURCES=user,project uv run pytest -m live   # SDK real (custa centavos; excluído por padrão)
 ```
 
 Uma fase só está pronta com `pytest`, `ruff check`, `ruff format --check` e `mypy` passando.

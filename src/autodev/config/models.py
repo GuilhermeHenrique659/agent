@@ -1,4 +1,5 @@
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -112,6 +113,22 @@ class TddConfig(BaseModel):
     test_globs: list[str] = Field(default_factory=lambda: list(DEFAULT_TEST_GLOBS))
 
 
+SettingSource = Literal["user", "project", "local"]
+
+
+def _default_setting_sources() -> list[SettingSource]:
+    return ["project"]
+
+
+class RuntimeConfig(BaseModel):
+    """How agent sessions load Claude Code settings (e.g. authentication)."""
+
+    model_config = _STRICT
+
+    setting_sources: list[SettingSource] = Field(default_factory=_default_setting_sources)
+    settings: str | None = None  # extra settings JSON; relative to .agent/, absolute or ~
+
+
 class ProjectConfig(BaseModel):
     model_config = _STRICT
 
@@ -120,3 +137,4 @@ class ProjectConfig(BaseModel):
     limits: LimitsConfig = LimitsConfig()
     tdd: TddConfig = TddConfig()
     agents: AgentsConfig = AgentsConfig()
+    runtime: RuntimeConfig = RuntimeConfig()

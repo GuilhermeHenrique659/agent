@@ -127,3 +127,20 @@ def test_template_config_is_valid_and_has_mixed_defaults(tmp_path: Path) -> None
     assert agents.profile_for(Role.REVIEWER).tools == ["Read", "Grep", "Glob", "Bash"]
     assert load_config(tmp_path).limits.command_timeout_s == 900
     assert "*_test.go" in load_config(tmp_path).tdd.test_globs
+    runtime = load_config(tmp_path).runtime
+    assert (runtime.setting_sources, runtime.settings) == (["project"], None)
+
+
+def test_runtime_defaults_and_overrides(tmp_path: Path) -> None:
+    write_config(tmp_path, "")
+    runtime = load_config(tmp_path).runtime
+    assert (runtime.setting_sources, runtime.settings) == (["project"], None)
+    write_config(tmp_path, "runtime:\n  setting_sources: [user, project]\n  settings: auth.json\n")
+    runtime = load_config(tmp_path).runtime
+    assert (runtime.setting_sources, runtime.settings) == (["user", "project"], "auth.json")
+
+
+def test_invalid_setting_source_raises_config_error(tmp_path: Path) -> None:
+    write_config(tmp_path, "runtime:\n  setting_sources: [global]\n")
+    with pytest.raises(ConfigError, match="setting_sources"):
+        load_config(tmp_path)

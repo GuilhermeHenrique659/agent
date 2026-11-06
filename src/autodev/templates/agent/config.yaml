@@ -14,6 +14,16 @@ limits:
   max_attempts: 3  # review/QA rejections before a story is blocked
   command_timeout_s: 900  # max seconds for each build/test/lint command
 
+# Which Claude Code settings agent sessions load (authentication lives there).
+runtime:
+  # project = this repo's .claude/ settings only. Adding `user` inherits all of
+  # ~/.claude (auth, but also your global CLAUDE.md, hooks, plugins, permissions).
+  setting_sources: [project]
+  # Extra settings JSON passed to every agent session: path relative to .agent/,
+  # absolute, or ~/... Prefer this to load only what agents need, e.g. a file
+  # containing just {"apiKeyHelper": "..."} copied from ~/.claude/settings.json.
+  settings: null
+
 # Files matching these globs (fnmatch on the repo-relative path; * also matches /) are test files.
 # A red commit may only touch test files, a green commit may not touch them.
 tdd:

@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Any
 
 from claude_agent_sdk import (
@@ -10,6 +11,7 @@ from claude_agent_sdk import (
 from pydantic import BaseModel, ValidationError
 
 from autodev.adapters.git_guard import is_forbidden_git_command
+from autodev.config.models import SettingSource
 from autodev.ports.agent_runtime import AgentError, AgentOutcome, AgentRequest
 
 _RETRY_NOTE = (
@@ -33,7 +35,12 @@ async def deny_git_hook(input_data: Any, tool_use_id: str | None, context: Any) 
     return {}
 
 
-def build_options[T: BaseModel](request: AgentRequest[T]) -> ClaudeAgentOptions:
+def build_options[T: BaseModel](
+    request: AgentRequest[T],
+    *,
+    settings: str | None = None,
+    setting_sources: Sequence[SettingSource] = ("project",),
+) -> ClaudeAgentOptions:
     profile = request.profile
     return ClaudeAgentOptions(
         model=profile.model,
@@ -53,14 +60,25 @@ def build_options[T: BaseModel](request: AgentRequest[T]) -> ClaudeAgentOptions:
             "schema": request.output_model.model_json_schema(),
         },
         max_budget_usd=profile.max_budget_usd,
-        setting_sources=["project"],
+        settings=settings,
+        setting_sources=list(setting_sources),
         hooks={"PreToolUse": [HookMatcher(matcher="Bash", hooks=[deny_git_hook])]},
     )
 
 
 class ClaudeSdkRuntime:
+    def __init__(
+        self,
+        settings: str | None = None,
+        setting_sources: Sequence[SettingSource] = ("project",),
+    ) -> None:
+        self.settings = settings
+        self.setting_sources = list(setting_sources)
+
     async def run[T: BaseModel](self, request: AgentRequest[T]) -> AgentOutcome[T]:
-        options = build_options(request)
+        options = build_options(
+            request, settings=self.settings, setting_sources=self.setting_sources
+        )
         cost: float | None = None
         turns = 0
         prompt = request.prompt

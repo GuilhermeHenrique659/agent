@@ -78,6 +78,16 @@ Os agentes só podem usar as ferramentas listadas (padrão: Read, Write, Edit, G
 
 Cada campo segue a precedência: valor do papel → `defaults` → padrão embutido. Chaves desconhecidas são rejeitadas, então erros de digitação falham logo no carregamento.
 
+### Autenticação dos agentes
+
+Os agentes rodam via Claude Agent SDK e, por padrão, carregam só as settings do projeto. Se a sua autenticação do Claude Code vem de `~/.claude/settings.json` (por exemplo, um `apiKeyHelper`), configure uma das opções:
+
+```yaml
+runtime:
+  settings: auth.json                # .agent/auth.json com só o necessário, ex. {"apiKeyHelper": "..."}
+  # ou: setting_sources: [user, project]   # herda todo o ~/.claude (inclui CLAUDE.md global, hooks, plugins)
+```
+
 ## Roadmap
 
 | Fase | Entrega | Status |

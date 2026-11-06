@@ -12,6 +12,7 @@ from autodev.adapters.claude_sdk_runtime import ClaudeSdkRuntime
 from autodev.adapters.git import GitRepo
 from autodev.adapters.knowledge_folder import KnowledgeFolder
 from autodev.config import ConfigError, load_config
+from autodev.config.models import ProjectConfig
 from autodev.domain.story import InvalidTransition
 from autodev.gates.runner import run_gates
 from autodev.pipeline.run_log import RunLog
@@ -80,9 +81,17 @@ def check(path: PathArg = Path()) -> None:
         raise typer.Exit(1)
 
 
-def make_runtime() -> AgentRuntime:
+def make_runtime(config: ProjectConfig, root: Path) -> AgentRuntime:
     """Factory for the agent runtime; tests monkeypatch it."""
-    return ClaudeSdkRuntime()
+    settings = config.runtime.settings
+    if settings is not None:
+        settings_path = Path(settings).expanduser()
+        if not settings_path.is_absolute():
+            settings_path = root / ".agent" / settings_path
+        if not settings_path.is_file():
+            raise ConfigError(f"runtime.settings file not found: {settings_path}")
+        settings = str(settings_path)
+    return ClaudeSdkRuntime(settings=settings, setting_sources=config.runtime.setting_sources)
 
 
 @app.command()
@@ -93,7 +102,7 @@ def run(story_id: str, path: Annotated[Path, typer.Option(help="Project root.")]
         runner = StoryRunner(
             config,
             path,
-            make_runtime(),
+            make_runtime(config, path),
             GitRepo(path),
             StoryStore(path),
             KnowledgeFolder(path),

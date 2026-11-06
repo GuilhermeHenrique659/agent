@@ -143,7 +143,7 @@ def test_run_prints_final_status_with_fake_runtime(
     )
     fake.script(Role.IMPLEMENTER, Step(ImplementerOutput(summary="i"), write_impl))
     fake.script(Role.REVIEWER, Step(ReviewOutput(approved=True, summary="ok", findings=[])))
-    monkeypatch.setattr(cli, "make_runtime", lambda: fake)
+    monkeypatch.setattr(cli, "make_runtime", lambda config, root: fake)
     result = runner.invoke(app, ["run", "S-0001", "--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert "in_qa" in result.output
@@ -152,7 +152,31 @@ def test_run_prints_final_status_with_fake_runtime(
 
 def test_run_unknown_story_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     setup_runnable_project(tmp_path)
-    monkeypatch.setattr(cli, "make_runtime", lambda: FakeAgentRuntime())
+    monkeypatch.setattr(cli, "make_runtime", lambda config, root: FakeAgentRuntime())
     result = runner.invoke(app, ["run", "S-9999", "--path", str(tmp_path)])
     assert result.exit_code == 1
     assert "S-9999" in result.output
+
+
+def test_make_runtime_resolves_settings_relative_to_agent_dir(tmp_path: Path) -> None:
+    from autodev.adapters.claude_sdk_runtime import ClaudeSdkRuntime
+    from autodev.config.models import ProjectConfig, RuntimeConfig
+
+    (tmp_path / ".agent").mkdir()
+    (tmp_path / ".agent" / "auth.json").write_text("{}")
+    config = ProjectConfig(
+        runtime=RuntimeConfig(settings="auth.json", setting_sources=["user", "project"])
+    )
+    runtime = cli.make_runtime(config, tmp_path)
+    assert isinstance(runtime, ClaudeSdkRuntime)
+    assert runtime.settings == str(tmp_path / ".agent" / "auth.json")
+    assert runtime.setting_sources == ["user", "project"]
+
+
+def test_make_runtime_with_missing_settings_file_raises_config_error(tmp_path: Path) -> None:
+    from autodev.config import ConfigError
+    from autodev.config.models import ProjectConfig, RuntimeConfig
+
+    config = ProjectConfig(runtime=RuntimeConfig(settings="missing.json"))
+    with pytest.raises(ConfigError, match=r"missing\.json"):
+        cli.make_runtime(config, tmp_path)

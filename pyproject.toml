@@ -9,6 +9,7 @@ dependencies = [
     "typer",
     "rich",
     "claude-agent-sdk>=0.2.178",
+    "mcp>=2.3",
 ]
 
 [project.scripts]

@@ -1,4 +1,5 @@
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -237,9 +238,23 @@ def setup_git_project(root: Path, adr: bool = True, code: bool = False) -> None:
     repo.commit_all("initial")
 
 
+class EchoIO:
+    """Scripted IO that also prints what is shown, like the console IO does."""
+
+    def __init__(self, inner: FakeIO) -> None:
+        self._inner = inner
+
+    def show(self, text: str) -> None:
+        self._inner.show(text)
+        print(text)
+
+    def ask(self, prompt: str) -> str:
+        return self._inner.ask(prompt)
+
+
 def patch_factories(monkeypatch: pytest.MonkeyPatch, fake: FakeAgentRuntime, io: FakeIO) -> None:
     monkeypatch.setattr(cli, "make_runtime", lambda config, root: fake)
-    monkeypatch.setattr(cli, "make_io", lambda: io)
+    monkeypatch.setattr(cli, "make_io", lambda: EchoIO(io))
 
 
 def test_request_flow_approve_and_skip_implementation(
@@ -278,7 +293,7 @@ def test_request_feedback_then_later(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert story.status == StoryStatus.REFINED
     assert story.title == "Second"
     assert "split it" in fake.requests_for(Role.REFINER)[1].prompt
-    assert len(io.shown) == 3  # discovery turn + two summaries
+    assert len(io.shown) == 4  # discovery turn + two summaries + the continue-later hint
 
 
 def test_request_without_text_asks_for_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -743,3 +758,24 @@ def test_doctor_command_ok_and_failure(tmp_path: Path, monkeypatch: pytest.Monke
     assert failed.exit_code == 1
     assert "auth failed" in failed.output
     assert "runtime.settings" in failed.output
+
+
+def test_mcp_command_builds_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mcp.server import MCPServer
+
+    ran: list[MCPServer] = []
+    monkeypatch.setattr(MCPServer, "run", lambda self, *a, **k: ran.append(self))
+    result = runner.invoke(app, ["mcp"])
+    assert result.exit_code == 0, result.output
+    assert [server.name for server in ran] == ["autodev"]
+
+
+def test_install_claude_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(shutil, "which", lambda name: "/bin/autodev" if name == "autodev" else None)
+    result = runner.invoke(app, ["install-claude", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "claude mcp add --scope user autodev -- /bin/autodev mcp" in result.output.replace(
+        "\n", ""
+    )
+    assert (tmp_path / ".claude" / "skills" / "autodev" / "SKILL.md").is_file()

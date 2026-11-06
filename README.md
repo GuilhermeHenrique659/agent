@@ -48,6 +48,15 @@ uv run autodev improve --path /caminho      # retro do processo (métricas → p
 uv run autodev improve --lint --path /caminho  # regras de lint a partir de standards/ (→ story)
 ```
 
+## Usar de dentro do Claude Code (MCP)
+
+```bash
+uv tool install --editable ~/Desktop/projects/agent   # uma vez
+autodev install-claude                                # registra o servidor MCP (escopo de usuário) e a skill /autodev
+```
+
+Depois, em qualquer projeto, converse com o Claude: "faça o onboard do autodev neste repo", "/autodev quero uma funcionalidade X", "rode a story S-0001". O Claude usa as ferramentas `autodev_*`, repassa as perguntas do discovery, do briefing e das aprovações para você e acompanha execuções longas. Ele nunca aprova nada no seu lugar.
+
 ## Colocar o autodev num projeto (novo ou existente)
 
 ```bash

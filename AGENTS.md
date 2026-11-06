@@ -41,6 +41,7 @@ Pedido → DISCOVERY → REFINAMENTO → [aprovação humana] → IMPLEMENTAÇÃ
 19. **Lint a partir dos standards**: `autodev improve --lint` (fora do padrão do `improve`) → improver propõe regras (ferramenta, regra, standard que aplica) → você escolhe → **uma** story DRAFT com tabela de regras e guia de TDD: fixture com a violação em `tests/`, excluída do lint normal, e um teste que roda o linter direto nela (red) até a regra ser habilitada (green). Aceitar um standard na retro faz o CLI sugerir o `--lint`.
 20. **Projetos existentes (CLAUDE.md, AGENTS.md, rules, skills, hooks)**: com `setting_sources` contendo `project`, os agentes carregam o CLAUDE.md (o AGENTS.md só se o CLAUDE.md importar `@AGENTS.md`) e o `.claude/settings.json`. Toda instrução de papel termina com a seção fixa `## Precedence`: o processo do autodev (fases de TDD, git do orquestrador, papéis só leitura, formato de saída) vence; as convenções do projeto governam o código. A `KnowledgeFolder` inclui `CLAUDE.md`, `AGENTS.md` e `.claude/rules/**/*.md`. Skills por papel (`skills: all | [nomes]`, ausente = nenhuma → `skills=[]` no SDK; template: `all` em test_writer/implementer). O SDK só acrescenta `Skill` ao `--allowedTools`, então o adapter acrescenta `Skill` ao `tools` (e ao `allowed_tools` só com `all`, porque um `Skill` solto liberaria todas as skills de uma lista). O `brief` não repete convenções já documentadas, e o `stack.md` aponta para elas. `init` e `brief` avisam se o projeto tem hooks (eles também rodam nas sessões dos agentes e escapam do bloqueio de git).
 21. **Onboarding** (`autodev onboard`): um comando idempotente para projeto novo ou existente: pasta/git → `.agent/` (+ `.gitignore` com backlog/, runs/, auth.json) → perguntas com padrões detectados (gravadas por `config_edit.set_value`, que preserva comentários) → convenções (`@AGENTS.md`, hooks) → `check_connection` (perfil do implementer com effort low, sem ferramentas, teto US$ 0,20) **antes** do commit `chore: onboard autodev` → briefing opcional. Autenticação mínima: `.agent/auth.json` com `apiKeyHelper` + env `ANTHROPIC_*` e `CLAUDE_CODE_API_KEY_HELPER_TTL_MS` de `~/.claude/settings.json` (verificado ao vivo), chmod 600, nunca impresso. `context.paths` referencia docs existentes do repo (arquivos, ou .md/.txt/.rst/.adoc de pastas) sem copiar.
+22. **MCP** (`autodev mcp`, stdio, SDK `mcp` 2.x: `from mcp.server import MCPServer`; FastMCP não existe mais): cada comando de `app/commands.py` roda como **sessão** numa thread; o `BridgeIO.ask` bloqueia o fluxo e a ferramenta devolve `{session_id, state: awaiting_reply|working|finished|failed|cancelled, messages, question, error}`; `autodev_reply`/`autodev_poll`/`autodev_cancel` continuam. Espera até ~45 s por chamada e depois `working`. Uma sessão ativa por projeto. O cancelamento não interrompe uma chamada de agente em andamento. A skill `/autodev` obriga o Claude a repassar as perguntas literalmente, nunca aprovar no lugar do usuário e sempre passar o `path` absoluto. `autodev install-claude` registra `claude mcp add --scope user autodev -- <exe> mcp` e instala a skill, perguntando antes. O CLI e o MCP compartilham `app/commands.py`; nada pode escrever no stdout em modo MCP.
 
 ## Estrutura do `.agent/` no projeto-alvo
 
@@ -60,7 +61,7 @@ runs/                logs de execução (alimentam a auto-melhoria)
 
 ```
 src/autodev/
-  cli.py               onboard | doctor | init | status | check | brief | request | discover | approve | refine | show | run | resume | improve
+  cli.py               (fino) mcp | install-claude | onboard | doctor | init | status | check | brief | request | discover | approve | refine | show | run | resume | improve
   config/              models.py (pydantic, extra="forbid"), loader.py (load_config, ConfigError)
   domain/              role.py (Role), story.py (Story, Task, StoryStatus, InvalidTransition)
   pipeline/            state_store.py (StoryStore: save/get/has/values/next_id)
@@ -82,6 +83,9 @@ src/autodev/
   adapters/            git.py (GitRepo: ... reset_hard, is_ignored), claude_sdk_runtime.py (build_options, deny_git_hook),
                        git_guard.py (is_forbidden_git_command), knowledge_folder.py (ContextSource)
   adapters/console_io.py (UserIO no terminal)
+  app/                 commands.py (um async por comando, fala só via UserIO; CommandError), runtime.py (make_runtime)
+  mcp/                 bridge.py (BridgeIO), sessions.py (SessionManager), server.py (16 ferramentas), install.py
+  templates/claude/    skill /autodev instalada em ~/.claude/skills/autodev
   onboarding/          onboard.py (fluxo idempotente), auth.py (auth.json mínimo), doctor.py (check_connection), scaffold.py
   improve/             metrics.py (ProcessStats dos runs/*.jsonl), state.py (dica a cada N), process_retro.py, code_scan.py,
                        lint_rules.py, selection.py

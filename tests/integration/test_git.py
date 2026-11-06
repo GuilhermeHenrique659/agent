@@ -208,3 +208,20 @@ def test_tracked_files(repo: GitRepo) -> None:
     repo.commit_all("more")
     (repo.path / "untracked.txt").write_text("x")
     assert repo.tracked_files() == ["README.md", "src/a b.py"]
+
+
+def test_churn_orders_by_commit_count_and_excludes_agent_dir(repo: GitRepo) -> None:
+    write_commit(repo, "b.py", "1", "b1")
+    write_commit(repo, "a.py", "1", "a1")
+    write_commit(repo, "hot.py", "1", "h1")
+    write_commit(repo, "hot.py", "2", "h2")
+    write_commit(repo, "hot.py", "3", "h3")
+    write_commit(repo, "gone.py", "1", "g1")
+    write_commit(repo, "gone.py", "2", "g2")
+    (repo.path / "gone.py").unlink()
+    repo.commit_all("remove gone")
+    (repo.path / ".agent").mkdir()
+    for i in range(5):
+        write_commit(repo, ".agent/notes.md", str(i), f"n{i}")
+    assert repo.churn() == [("hot.py", 3), ("README.md", 1), ("a.py", 1), ("b.py", 1)]
+    assert repo.churn(limit=2) == [("hot.py", 3), ("README.md", 1)]

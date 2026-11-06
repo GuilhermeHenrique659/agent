@@ -13,12 +13,16 @@ from autodev.domain.role import Role
 from autodev.domain.story import Story, StoryStatus, Task
 from autodev.pipeline.outputs import (
     AdrDraft,
+    CodeReview,
     Commands,
     DiscoveryResult,
     DiscoveryTurn,
     GlossaryEntry,
     ImplementerOutput,
+    ProcessProposal,
+    ProcessReview,
     QaOutput,
+    RefactoringProposal,
     RefinedTask,
     RefinementOutput,
     ReviewOutput,
@@ -26,6 +30,7 @@ from autodev.pipeline.outputs import (
     TechBriefTurn,
     TestWriterOutput,
 )
+from autodev.pipeline.run_log import RunLog
 from autodev.pipeline.state_store import StoryStore
 from tests.fakes import FakeAgentRuntime, FakeIO, Step
 from tests.integration.conftest import git
@@ -468,3 +473,119 @@ def test_request_does_not_offer_brief_when_adr_exists(
     result = runner.invoke(app, ["request", "Pay with card", "--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert io.prompts == ["[a]pprove, [f]eedback, [l]ater"]
+
+
+def improve_project(root: Path, with_runs: bool = True) -> None:
+    setup_git_project(root)
+    if with_runs:
+        log = RunLog(root, "S-0001")
+        log.append("run_started", detail="approved")
+        log.append("story_done")
+
+
+def retro_step() -> Step:
+    return Step(
+        ProcessReview(
+            summary="Retro",
+            proposals=[
+                ProcessProposal(
+                    kind="prompt", target="implementer", rationale="r", content="NEW RULES"
+                )
+            ],
+        )
+    )
+
+
+def scan_step() -> Step:
+    return Step(
+        CodeReview(
+            summary="Scan",
+            proposals=[RefactoringProposal(title="Split app", description="d", rationale="r")],
+        )
+    )
+
+
+def test_improve_runs_both_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    improve_project(tmp_path)
+    fake = FakeAgentRuntime()
+    fake.script(Role.IMPROVER, retro_step(), scan_step())
+    patch_factories(monkeypatch, fake, FakeIO("a", "1"))
+    result = runner.invoke(app, ["improve", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / ".agent" / "process" / "implementer.md").read_text() == "NEW RULES"
+    assert "S-0001" in result.output
+    assert "Split app" in StoryStore(tmp_path).get("S-0001").title
+    assert len(fake.requests_for(Role.IMPROVER)) == 2
+    assert "process/implementer.md" in result.output
+
+
+def test_improve_process_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    improve_project(tmp_path)
+    fake = FakeAgentRuntime()
+    fake.script(Role.IMPROVER, retro_step())
+    patch_factories(monkeypatch, fake, FakeIO("a"))
+    result = runner.invoke(app, ["improve", "--process", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert len(fake.requests_for(Role.IMPROVER)) == 1
+    assert StoryStore(tmp_path).values() == []
+
+
+def test_improve_code_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    improve_project(tmp_path, with_runs=False)
+    fake = FakeAgentRuntime()
+    fake.script(Role.IMPROVER, scan_step())
+    patch_factories(monkeypatch, fake, FakeIO("all"))
+    result = runner.invoke(app, ["improve", "--code", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert len(StoryStore(tmp_path).values()) == 1
+
+
+def test_improve_process_error_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    improve_project(tmp_path, with_runs=False)
+    patch_factories(monkeypatch, FakeAgentRuntime(), FakeIO())
+    result = runner.invoke(app, ["improve", "--process", "--path", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "No runs yet" in result.output
+
+
+def test_improve_continues_with_code_scan_when_no_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    improve_project(tmp_path, with_runs=False)
+    fake = FakeAgentRuntime()
+    fake.script(Role.IMPROVER, scan_step())
+    patch_factories(monkeypatch, fake, FakeIO("1"))
+    result = runner.invoke(app, ["improve", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "No runs yet" in result.output
+    assert len(StoryStore(tmp_path).values()) == 1
+
+
+def test_run_prints_improve_hint_when_threshold_reached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup_runnable_project(tmp_path)
+    config = tmp_path / ".agent" / "config.yaml"
+    config.write_text(config.read_text() + "improve:\n  every_n_stories: 1\n")
+    GitRepo(tmp_path).commit_all("config")
+
+    def write_tests(workdir: Path) -> None:
+        (workdir / "tests").mkdir(exist_ok=True)
+        (workdir / "tests" / "check.py").write_text(CHECK)
+
+    def write_impl(workdir: Path) -> None:
+        (workdir / "impl.py").write_text(IMPL_GOOD)
+
+    fake = FakeAgentRuntime()
+    fake.script(
+        Role.TEST_WRITER,
+        Step(TestWriterOutput(summary="t", test_files=["tests/check.py"]), write_tests),
+    )
+    fake.script(Role.IMPLEMENTER, Step(ImplementerOutput(summary="i"), write_impl))
+    fake.script(Role.REVIEWER, Step(ReviewOutput(approved=True, summary="ok", findings=[])))
+    fake.script(Role.QA, Step(QaOutput(approved=True, summary="ok")))
+    monkeypatch.setattr(cli, "make_runtime", lambda config, root: fake)
+    result = runner.invoke(app, ["run", "S-0001", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "1 stories delivered since the last improvement" in result.output
+    assert "autodev improve" in result.output

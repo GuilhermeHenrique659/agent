@@ -40,6 +40,10 @@ tdd:
     - "*.test.*"
     - "*.spec.*"
 
+# `autodev run` suggests `autodev improve` once this many stories reached DONE since the last improve.
+improve:
+  every_n_stories: 5
+
 # effort is one of low|medium|high|xhigh|max.
 # `prompt` may point to a file in process/ (path relative to .agent/) to override the built-in prompt.
 # `tools` is the only set of tools the agent can use; roles without `tools` get
@@ -84,3 +88,4 @@ agents:
     improver:
       model: claude-opus-5-5
       effort: high
+      tools: [Read, Grep, Glob]

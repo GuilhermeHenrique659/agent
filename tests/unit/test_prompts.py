@@ -9,9 +9,11 @@ from autodev.domain.story import Story, Task
 from autodev.pipeline.outputs import CriterionCheck, Finding, QaIssue, QaOutput
 from autodev.pipeline.prompts import (
     MAX_FEEDBACK_CHARS,
+    build_code_scan_prompt,
     build_implementer_prompt,
     build_merge_fix_prompt,
     build_merge_prompt,
+    build_process_retro_prompt,
     build_qa_fix_prompt,
     build_qa_prompt,
     build_review_fix_prompt,
@@ -134,3 +136,43 @@ def test_merge_prompt_lists_conflicted_files_and_feedback() -> None:
 def test_merge_fix_prompt_includes_gate_output() -> None:
     text = build_merge_fix_prompt(make_story(), "main", [Path("k.md")], "lint exploded")
     assert "lint exploded" in text and "says hello" in text and "k.md" in text
+
+
+def test_process_override_file_used_when_present(tmp_path: Path) -> None:
+    (tmp_path / "process").mkdir()
+    (tmp_path / "process" / "implementer.md").write_text("convention override")
+    assert (
+        load_instructions(Role.IMPLEMENTER, profile_for(Role.IMPLEMENTER), tmp_path)
+        == "convention override"
+    )
+    builtin = load_instructions(Role.REVIEWER, profile_for(Role.REVIEWER), tmp_path)
+    assert builtin != "convention override"
+
+
+def test_profile_prompt_takes_precedence_over_process_file(tmp_path: Path) -> None:
+    (tmp_path / "process").mkdir()
+    (tmp_path / "process" / "implementer.md").write_text("convention override")
+    (tmp_path / "process" / "other.md").write_text("explicit")
+    profile = profile_for(Role.IMPLEMENTER, "process/other.md")
+    assert load_instructions(Role.IMPLEMENTER, profile, tmp_path) == "explicit"
+
+
+def test_process_retro_prompt_includes_stats_and_instructions() -> None:
+    prompt = build_process_retro_prompt(
+        "## Totals\nruns: 3",
+        {Role.IMPLEMENTER: "IMPL RULES", Role.QA: "QA RULES"},
+        [Path(".agent/standards/testing.md")],
+    )
+    assert "runs: 3" in prompt
+    assert "IMPL RULES" in prompt and "QA RULES" in prompt
+    assert "implementer" in prompt
+    assert ".agent/standards/testing.md" in prompt
+
+
+def test_code_scan_prompt_includes_churn() -> None:
+    prompt = build_code_scan_prompt(
+        [("src/app.py", 12), ("src/util.py", 3)], [Path(".agent/standards/stack.md")]
+    )
+    assert "src/app.py" in prompt and "12" in prompt
+    assert "src/util.py" in prompt
+    assert ".agent/standards/stack.md" in prompt

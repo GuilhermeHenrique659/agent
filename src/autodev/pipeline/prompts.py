@@ -23,6 +23,9 @@ def load_instructions(role: Role, profile: AgentProfile, agent_dir: Path) -> str
         if not path.is_file():
             raise ConfigError(f"Prompt file for role {role.value} not found: {path}")
         return path.read_text()
+    override = agent_dir / "process" / f"{role.value}.md"
+    if override.is_file():
+        return override.read_text()
     resource = files("autodev") / "prompts" / f"{role.value}.md"
     return resource.read_text()
 
@@ -249,4 +252,32 @@ def build_bootstrap_prompt(brief: TechBrief, context: list[Path], feedback: str 
         f"Commands (must work when you finish):\n- build: {commands.build}\n"
         f"- test: {commands.test}\n- lint: {commands.lint}\n\n"
         f"{_context_section(context)}{_feedback_section(feedback)}"
+    )
+
+
+def build_process_retro_prompt(
+    stats_markdown: str, effective_instructions: dict[Role, str], context: list[Path]
+) -> str:
+    instructions = "\n\n".join(
+        f"### {role.value}\n{text.strip()}" for role, text in effective_instructions.items()
+    )
+    return (
+        "Run a process retrospective. Below are the metrics computed from the run logs and the "
+        "instructions each role currently uses. Propose few, high-value changes: a `prompt` "
+        "proposal (target = role name, content = the complete new instructions), a `standard` "
+        "proposal (target = standards file name such as testing.md, content = markdown to "
+        "append) or a `config` recommendation (target = config key, content = what to change). "
+        "Base each proposal on evidence from the metrics.\n\n"
+        f"# Metrics\n{stats_markdown}\n\n# Current instructions per role\n{instructions}\n\n"
+        f"{_context_section(context)}"
+    )
+
+
+def build_code_scan_prompt(churn: list[tuple[str, int]], context: list[Path]) -> str:
+    listed = "\n".join(f"- {path}: {count} commits" for path, count in churn) or "- (none)"
+    return (
+        "Scan the code base for refactoring opportunities. Propose small, self-contained "
+        "refactorings, each one a story, aligned with the standards and ADRs. Prioritise the "
+        "files that change most often.\n\n"
+        f"Most changed files:\n{listed}\n\n{_context_section(context)}"
     )

@@ -2,7 +2,7 @@
 
 CLI em Python que orquestra agentes de IA para construir software. Ele leva um pedido (funcionalidade, correção ou melhoria) até o merge na branch principal. No caminho, entende o domínio com você, quebra o trabalho em stories, implementa com TDD e valida com gates automáticos e revisão por agentes.
 
-> **Status:** em desenvolvimento. O ciclo completo funciona: pedido com discovery e refinamento (`request`, `discover`, `approve`, `refine`, `show`), e implementação com TDD, revisão, QA e merge na main até DONE (`run`, `resume`). Também há briefing técnico com bootstrap de projeto vazio (`brief`) e revisão de arquitetura no discovery. Falta a auto-melhoria. O pipeline com agentes está no [roadmap](#roadmap).
+> **Status:** em desenvolvimento. O ciclo completo funciona: pedido com discovery e refinamento (`request`, `discover`, `approve`, `refine`, `show`), e implementação com TDD, revisão, QA e merge na main até DONE (`run`, `resume`). Também há briefing técnico com bootstrap de projeto vazio (`brief`), revisão de arquitetura no discovery e auto-melhoria (`improve`). Falta gerar regras de lint a partir dos standards. O pipeline com agentes está no [roadmap](#roadmap).
 
 ## Como funciona
 
@@ -44,6 +44,7 @@ uv run autodev check /caminho/do/projeto    # roda os gates de build, testes e l
 uv run autodev run S-0001 --path /caminho   # implementa, revisa, faz QA e merge na main (DONE)
 uv run autodev discover S-0002 --path /caminho  # discovery de uma story DRAFT (ex.: melhoria sugerida pelo QA)
 uv run autodev resume S-0001 --path /caminho  # desbloqueia uma story BLOCKED
+uv run autodev improve --path /caminho      # retro do processo (métricas → propostas) e scan de código (→ stories)
 ```
 
 ## Configuração
@@ -58,7 +59,7 @@ Toda a configuração fica em documentos na pasta `.agent/` do projeto-alvo:
 | `domain/events.md` | resultado do event storming |
 | `architecture/adr/` | decisões de arquitetura |
 | `standards/` | padrões de código aplicados na revisão e nas regras de lint |
-| `process/` | prompts que substituem os embutidos, por papel (ex.: `implementer.md`) |
+| `process/` | prompts que substituem os embutidos, por papel (ex.: `implementer.md`); valem automaticamente |
 | `backlog/` | stories (`S-0001.md`); fora do git |
 | `runs/` | logs das execuções (JSONL); fora do git |
 
@@ -104,7 +105,8 @@ runtime:
 | 4 | Discovery interativo e refinamento, `request`/`approve`/`refine`/`show` | ✅ |
 | 5 | QA, retrabalho, merge e conflitos, `discover` | ✅ |
 | 6 | Briefing técnico e revisão de arquitetura com ADRs, `brief` | ✅ |
-| 7 | `autodev improve` e regras de lint a partir de `standards/` | próximo |
+| 7a | `autodev improve`: retro do processo e scan de código | ✅ |
+| 7b | Regras de lint a partir de `standards/` | próximo |
 | depois | RAG, PR no GitHub, tasks em paralelo, Jira | |
 
 ## Desenvolvimento

@@ -136,3 +136,27 @@ class ArchitectureReview(BaseModel):
 
 class BootstrapOutput(BaseModel):
     summary: str
+
+
+class ProcessProposal(BaseModel):
+    kind: Literal["prompt", "standard", "config"]
+    target: str  # prompt: role name; standard: standards file name; config: config key
+    rationale: str
+    content: str  # prompt: full new instructions; standard: markdown to append; config: advice
+
+
+class ProcessReview(BaseModel):
+    summary: str
+    proposals: list[ProcessProposal] = []
+
+
+class RefactoringProposal(BaseModel):
+    title: str
+    description: str
+    rationale: str
+    files: list[str] = []
+
+
+class CodeReview(BaseModel):
+    summary: str
+    proposals: list[RefactoringProposal] = []

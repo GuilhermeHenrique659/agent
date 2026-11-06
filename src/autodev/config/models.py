@@ -130,6 +130,12 @@ class RuntimeConfig(BaseModel):
     settings: str | None = None  # extra settings JSON; relative to .agent/, absolute or ~
 
 
+class ImproveConfig(BaseModel):
+    model_config = _STRICT
+
+    every_n_stories: int = Field(default=5, ge=1)
+
+
 class ProjectConfig(BaseModel):
     model_config = _STRICT
 
@@ -139,3 +145,4 @@ class ProjectConfig(BaseModel):
     tdd: TddConfig = TddConfig()
     agents: AgentsConfig = AgentsConfig()
     runtime: RuntimeConfig = RuntimeConfig()
+    improve: ImproveConfig = ImproveConfig()

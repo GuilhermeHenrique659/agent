@@ -17,6 +17,9 @@ from autodev.config import ConfigError, load_config
 from autodev.config.models import ProjectConfig
 from autodev.domain.story import InvalidTransition, Story, StoryStatus
 from autodev.gates.runner import run_gates
+from autodev.improve.code_scan import run_code_scan
+from autodev.improve.process_retro import NoRunsYet, run_process_retro
+from autodev.improve.state import new_done_count, should_suggest
 from autodev.pipeline.adr import adr_dir, has_decisions
 from autodev.pipeline.approval import approve_story
 from autodev.pipeline.briefing import is_empty_repo, run_brief
@@ -159,10 +162,19 @@ def _run_story(config: ProjectConfig, path: Path, runtime: AgentRuntime, story_i
     return asyncio.run(runner.run(story_id))
 
 
-def _print_final_status(story: Story) -> None:
+def _print_final_status(story: Story, config: ProjectConfig, path: Path) -> None:
     console.print(f"{story.id}: {story.status.value}")
     if story.blocked_reason:
         console.print(f"Blocked: {story.blocked_reason}", markup=False)
+    if story.status == StoryStatus.DONE:
+        store = StoryStore(path)
+        if should_suggest(path, store, config.improve.every_n_stories):
+            console.print(
+                f"{new_done_count(path, store)} stories delivered since the last improvement. "
+                "Run `autodev improve` to review the process and the code.",
+                markup=False,
+                soft_wrap=True,
+            )
 
 
 @app.command()
@@ -185,7 +197,7 @@ def run(story_id: str, path: PathOpt = Path()) -> None:
     except (ConfigError, RunError) as exc:
         err_console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from exc
-    _print_final_status(story)
+    _print_final_status(story, config, path)
 
 
 @app.command()
@@ -292,7 +304,7 @@ def _review_loop(
             )
             console.print(f"{story.id}: approved")
             if io.ask("Implement now? [y/N]").strip().lower() == "y":
-                _print_final_status(_run_story(config, path, runtime, story.id))
+                _print_final_status(_run_story(config, path, runtime, story.id), config, path)
             return
         if choice == "f":
             feedback = io.ask("Feedback")
@@ -388,3 +400,67 @@ def show(story_id: str, path: PathOpt = Path()) -> None:
         raise typer.Exit(1) from exc
     console.print(Markdown(render_story_summary(story)))
     console.print(f"{story.id}: {story.status.value}")
+
+
+@app.command()
+def improve(
+    process: Annotated[bool, typer.Option("--process", help="Process retrospective only.")] = False,
+    code: Annotated[bool, typer.Option("--code", help="Code-health scan only.")] = False,
+    path: PathOpt = Path(),
+) -> None:
+    """Review the process (from the run logs) and the code; proposes, never applies on its own."""
+    both = not process and not code
+    try:
+        config = load_config(path)
+        runtime = make_runtime(config, path)
+        io = make_io()
+        store = StoryStore(path)
+        repo = GitRepo(path)
+        context = KnowledgeFolder(path)
+        log = RunLog(path, "improve")
+        if process or both:
+            try:
+                accepted = asyncio.run(
+                    run_process_retro(
+                        config=config,
+                        project_root=path,
+                        runtime=runtime,
+                        repo=repo,
+                        context=context,
+                        store=store,
+                        io=io,
+                        log=log,
+                    )
+                )
+            except NoRunsYet as exc:
+                if not both:
+                    raise
+                console.print(str(exc), markup=False)
+            else:
+                for p in accepted:
+                    if p.kind == "prompt":
+                        console.print(f"Wrote .agent/process/{p.target}.md", markup=False)
+                    elif p.kind == "standard":
+                        console.print(f"Updated .agent/standards/{p.target}", markup=False)
+                    else:
+                        console.print(
+                            f"Config recommendation: {p.target}: {p.content}", markup=False
+                        )
+        if code or both:
+            stories = asyncio.run(
+                run_code_scan(
+                    config=config,
+                    project_root=path,
+                    runtime=runtime,
+                    repo=repo,
+                    context=context,
+                    store=store,
+                    io=io,
+                    log=log,
+                )
+            )
+            for story in stories:
+                console.print(f"Created {story.id}: {story.title}", markup=False)
+    except (ConfigError, RunError) as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc

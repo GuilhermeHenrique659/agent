@@ -160,3 +160,20 @@ def test_max_discovery_turns_default_and_template_discovery_tools(tmp_path: Path
     assert config.limits.max_discovery_turns == 20
     for role in (Role.DISCOVERY, Role.REFINER):
         assert config.agents.profile_for(role).tools == ["Read", "Grep", "Glob"]
+
+
+def test_improve_defaults_and_template(tmp_path: Path) -> None:
+    from importlib.resources import files
+
+    write_config(tmp_path, "")
+    assert load_config(tmp_path).improve.every_n_stories == 5
+    write_config(tmp_path, "improve:\n  every_n_stories: 0\n")
+    with pytest.raises(ConfigError, match="every_n_stories"):
+        load_config(tmp_path)
+    write_config(tmp_path, "improve:\n  every_n_stories: 2\n")
+    assert load_config(tmp_path).improve.every_n_stories == 2
+    text: Any = (files("autodev") / "templates" / "agent" / "config.yaml").read_text()
+    write_config(tmp_path, text)
+    config = load_config(tmp_path)
+    assert config.improve.every_n_stories == 5
+    assert config.agents.profile_for(Role.IMPROVER).tools == ["Read", "Grep", "Glob"]

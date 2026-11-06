@@ -92,6 +92,16 @@ class GitRepo:
         out = self._run("ls-files", "-z").stdout
         return sorted(f for f in out.split("\0") if f)
 
+    def churn(self, limit: int = 20) -> list[tuple[str, int]]:
+        """Existing files by number of commits touching them, most changed first (no .agent/)."""
+        out = self._run("log", "--format=", "--name-only", "-z").stdout
+        counts: dict[str, int] = {}
+        for name in out.replace("\n", "\0").split("\0"):
+            if name and not name.startswith(".agent/"):
+                counts[name] = counts.get(name, 0) + 1
+        existing = [(n, c) for n, c in counts.items() if (self.path / n).is_file()]
+        return sorted(existing, key=lambda item: (-item[1], item[0]))[:limit]
+
     def reset_hard(self, ref: str) -> None:
         """Reset HEAD and the working tree to `ref` and delete untracked files (git clean -fd).
 

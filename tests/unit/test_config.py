@@ -144,3 +144,19 @@ def test_invalid_setting_source_raises_config_error(tmp_path: Path) -> None:
     write_config(tmp_path, "runtime:\n  setting_sources: [global]\n")
     with pytest.raises(ConfigError, match="setting_sources"):
         load_config(tmp_path)
+
+
+def test_max_discovery_turns_default_and_template_discovery_tools(tmp_path: Path) -> None:
+    from importlib.resources import files
+
+    write_config(tmp_path, "")
+    assert load_config(tmp_path).limits.max_discovery_turns == 20
+    write_config(tmp_path, "limits:\n  max_discovery_turns: 0\n")
+    with pytest.raises(ConfigError, match="max_discovery_turns"):
+        load_config(tmp_path)
+    text: Any = (files("autodev") / "templates" / "agent" / "config.yaml").read_text()
+    write_config(tmp_path, text)
+    config = load_config(tmp_path)
+    assert config.limits.max_discovery_turns == 20
+    for role in (Role.DISCOVERY, Role.REFINER):
+        assert config.agents.profile_for(role).tools == ["Read", "Grep", "Glob"]

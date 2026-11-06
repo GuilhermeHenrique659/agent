@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from claude_agent_sdk import ClaudeSDKError, ResultMessage
@@ -182,3 +182,110 @@ def test_deny_git_hook_denies_forbidden_and_allows_other() -> None:
     assert denied["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
     allowed = asyncio.run(hook({"tool_input": {"command": "pytest"}}, "id", {"signal": None}))
     assert allowed == {}
+
+
+class FakeClient:
+    instances: ClassVar[list["FakeClient"]] = []
+
+    def __init__(self, options: Any) -> None:
+        self.options = options
+        self.connected = False
+        self.disconnects = 0
+        self.sent: list[str] = []
+        self.results: list[ResultMessage | Exception] = []
+        FakeClient.instances.append(self)
+
+    async def connect(self) -> None:
+        self.connected = True
+
+    async def query(self, prompt: str) -> None:
+        self.sent.append(prompt)
+
+    async def receive_response(self) -> AsyncIterator[Any]:
+        item = self.results.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        yield item
+
+    async def disconnect(self) -> None:
+        self.disconnects += 1
+
+
+def patch_client(
+    monkeypatch: pytest.MonkeyPatch, results: list[ResultMessage | Exception]
+) -> FakeClient:
+    FakeClient.instances = []
+    original_init = FakeClient.__init__
+
+    def init(self: FakeClient, options: Any) -> None:
+        original_init(self, options)
+        self.results = results
+
+    monkeypatch.setattr(FakeClient, "__init__", init)
+    monkeypatch.setattr(claude_sdk_runtime, "ClaudeSDKClient", FakeClient)
+    return FakeClient  # type: ignore[return-value]
+
+
+def test_conversation_sends_messages_and_validates_turns(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    patch_client(monkeypatch, [result({"answer": 1}), result({"answer": 2}, turns=3)])
+
+    async def scenario() -> list[tuple[Out, float | None, int]]:
+        conversation = await ClaudeSdkRuntime().start_conversation(make_request(tmp_path))
+        client = FakeClient.instances[0]
+        assert client.connected
+        assert client.sent == []  # request.prompt is not sent automatically
+        outcomes = [await conversation.send("hello"), await conversation.send("again")]
+        assert client.sent == ["hello", "again"]
+        return [(o.output, o.cost_usd, o.turns) for o in outcomes]
+
+    assert asyncio.run(scenario()) == [(Out(answer=1), 0.25, 2), (Out(answer=2), 0.25, 3)]
+    assert FakeClient.instances[0].options.model == "m"
+
+
+def test_conversation_retries_invalid_output_once_in_same_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    patch_client(monkeypatch, [result({"answer": "x"}), result({"answer": 1}, turns=3)])
+
+    async def scenario() -> tuple[int, float | None, int]:
+        conversation = await ClaudeSdkRuntime().start_conversation(make_request(tmp_path))
+        outcome = await conversation.send("hello")
+        client = FakeClient.instances[0]
+        assert client.sent[0] == "hello"
+        assert client.sent[1].startswith("Your previous structured output was invalid:")
+        assert client.sent[1].endswith("Return output matching the schema.")
+        assert len(FakeClient.instances) == 1
+        return outcome.output.answer, outcome.cost_usd, outcome.turns
+
+    assert asyncio.run(scenario()) == (1, 0.5, 5)
+
+    patch_client(monkeypatch, [result(None), result({"nope": 1})])
+
+    async def failing() -> None:
+        conversation = await ClaudeSdkRuntime().start_conversation(make_request(tmp_path))
+        await conversation.send("hello")
+
+    with pytest.raises(AgentError, match="invalid structured output"):
+        asyncio.run(failing())
+
+    patch_client(monkeypatch, [result(is_error=True, errors=["boom"])])
+    with pytest.raises(AgentError, match="boom"):
+        asyncio.run(failing())
+
+    patch_client(monkeypatch, [ClaudeSDKError("down")])
+    with pytest.raises(AgentError, match="down"):
+        asyncio.run(failing())
+
+
+def test_conversation_close_disconnects(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    patch_client(monkeypatch, [])
+
+    async def scenario() -> None:
+        conversation = await ClaudeSdkRuntime().start_conversation(make_request(tmp_path))
+        await conversation.close()
+        await conversation.close()
+
+    asyncio.run(scenario())
+    assert FakeClient.instances[0].disconnects == 1

@@ -3,6 +3,7 @@ from typing import Any
 
 from claude_agent_sdk import (
     ClaudeAgentOptions,
+    ClaudeSDKClient,
     ClaudeSDKError,
     HookMatcher,
     ResultMessage,
@@ -12,7 +13,7 @@ from pydantic import BaseModel, ValidationError
 
 from autodev.adapters.git_guard import is_forbidden_git_command
 from autodev.config.models import SettingSource
-from autodev.ports.agent_runtime import AgentError, AgentOutcome, AgentRequest
+from autodev.ports.agent_runtime import AgentError, AgentOutcome, AgentRequest, Conversation
 
 _RETRY_NOTE = (
     "Your previous structured output was invalid: {error}. Return output matching the schema."
@@ -85,22 +86,27 @@ class ClaudeSdkRuntime:
         for attempt in (1, 2):
             result = await self._query(prompt, options)
             turns += result.num_turns
-            if result.total_cost_usd is not None:
-                cost = (cost or 0.0) + result.total_cost_usd
-            if result.is_error:
-                detail = "; ".join(result.errors or []) or (result.result or "")
-                raise AgentError(f"Agent run failed ({result.subtype}): {detail}")
+            cost = _add_cost(cost, result)
             try:
-                if result.structured_output is None:
-                    raise ValueError("no structured output was returned")
-                output = request.output_model.model_validate(result.structured_output)
-            except (ValidationError, ValueError) as exc:
+                output = _validated_output(result, request.output_model)
+            except _InvalidOutput as exc:
                 if attempt == 2:
                     raise AgentError(f"Agent returned invalid structured output: {exc}") from exc
                 prompt = f"{request.prompt}\n\n{_RETRY_NOTE.format(error=exc)}"
                 continue
             return AgentOutcome(output=output, cost_usd=cost, turns=turns)
         raise AssertionError("unreachable")
+
+    async def start_conversation[T: BaseModel](self, request: AgentRequest[T]) -> Conversation[T]:
+        options = build_options(
+            request, settings=self.settings, setting_sources=self.setting_sources
+        )
+        client = ClaudeSDKClient(options)
+        try:
+            await client.connect()
+        except ClaudeSDKError as exc:
+            raise AgentError(f"Claude SDK error: {exc}") from exc
+        return ClaudeSdkConversation(client, request.output_model)
 
     @staticmethod
     async def _query(prompt: str, options: ClaudeAgentOptions) -> ResultMessage:
@@ -111,6 +117,74 @@ class ClaudeSdkRuntime:
                     result = message
         except ClaudeSDKError as exc:
             raise AgentError(f"Claude SDK error: {exc}") from exc
-        if result is None:
-            raise AgentError("Agent finished without a result message")
-        return result
+        return _require_result(result)
+
+
+class ClaudeSdkConversation[T: BaseModel]:
+    def __init__(self, client: ClaudeSDKClient, output_model: type[T]) -> None:
+        self._client = client
+        self._output_model = output_model
+        self._closed = False
+
+    async def send(self, message: str) -> AgentOutcome[T]:
+        cost: float | None = None
+        turns = 0
+        prompt = message
+        for attempt in (1, 2):
+            result = await self._exchange(prompt)
+            turns += result.num_turns
+            cost = _add_cost(cost, result)
+            try:
+                output = _validated_output(result, self._output_model)
+            except _InvalidOutput as exc:
+                if attempt == 2:
+                    raise AgentError(f"Agent returned invalid structured output: {exc}") from exc
+                prompt = _RETRY_NOTE.format(error=exc)
+                continue
+            return AgentOutcome(output=output, cost_usd=cost, turns=turns)
+        raise AssertionError("unreachable")
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        await self._client.disconnect()
+
+    async def _exchange(self, prompt: str) -> ResultMessage:
+        result: ResultMessage | None = None
+        try:
+            await self._client.query(prompt)
+            async for message in self._client.receive_response():
+                if isinstance(message, ResultMessage):
+                    result = message
+        except ClaudeSDKError as exc:
+            raise AgentError(f"Claude SDK error: {exc}") from exc
+        return _require_result(result)
+
+
+class _InvalidOutput(Exception):
+    pass
+
+
+def _add_cost(cost: float | None, result: ResultMessage) -> float | None:
+    if result.total_cost_usd is None:
+        return cost
+    return (cost or 0.0) + result.total_cost_usd
+
+
+def _require_result(result: ResultMessage | None) -> ResultMessage:
+    if result is None:
+        raise AgentError("Agent finished without a result message")
+    if result.is_error:
+        detail = "; ".join(result.errors or []) or (result.result or "")
+        raise AgentError(f"Agent run failed ({result.subtype}): {detail}")
+    return result
+
+
+def _validated_output[T: BaseModel](result: ResultMessage, model: type[T]) -> T:
+    try:
+        if result.structured_output is None:
+            raise ValueError("no structured output was returned")
+        return model.model_validate(result.structured_output)
+    except (ValidationError, ValueError) as exc:
+        raise _InvalidOutput(str(exc)) from exc

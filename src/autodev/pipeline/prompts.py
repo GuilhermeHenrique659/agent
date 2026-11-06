@@ -95,3 +95,28 @@ def build_reviewer_prompt(story: Story, base_branch: str, context: list[Path]) -
         f"{base_branch}...HEAD`.\n\n{_story_section(story)}\n\n"
         f"Base branch: {base_branch}\n\n{_context_section(context)}"
     )
+
+
+def build_discovery_prompt(request: str, context: list[Path]) -> str:
+    return (
+        "Start the discovery briefing for this request. Read the project context first, "
+        "then ask your first focused questions. Reply in the language of the request.\n\n"
+        f"Request:\n{request.strip()}\n\n{_context_section(context)}"
+    )
+
+
+def build_refiner_prompt(story: Story, context: list[Path], feedback: str | None = None) -> str:
+    prompt = (
+        "Refine this story: user story, acceptance criteria (Given/When/Then) and a short "
+        "ordered list of tasks, each small enough for one red-to-green TDD cycle. "
+        "Use the same language as the request and the glossary terms.\n\n"
+        f"Story {story.id}: {story.title}\n\nDescription:\n{story.description.strip()}"
+    )
+    if story.acceptance_criteria or story.tasks:
+        criteria = "\n".join(f"- {c}" for c in story.acceptance_criteria) or "- (none)"
+        tasks = "\n".join(f"- {t.id}: {t.title}" for t in story.tasks) or "- (none)"
+        prompt += f"\n\nCurrent acceptance criteria:\n{criteria}\n\nCurrent tasks:\n{tasks}"
+    prompt += f"\n\n{_context_section(context)}"
+    if feedback:
+        prompt += f"\n\nFeedback to apply:\n{feedback[-MAX_FEEDBACK_CHARS:]}"
+    return prompt

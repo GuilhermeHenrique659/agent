@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class TestWriterOutput(BaseModel):
@@ -24,3 +24,45 @@ class ReviewOutput(BaseModel):
     approved: bool
     summary: str
     findings: list[Finding]
+
+
+class GlossaryEntry(BaseModel):
+    term: str
+    definition: str
+    notes: str = ""
+
+
+class EventStorming(BaseModel):
+    domain_events: list[str] = []
+    commands: list[str] = []
+    actors: list[str] = []
+    aggregates: list[str] = []
+    policies: list[str] = []
+    read_models: list[str] = []
+
+
+class DiscoveryResult(BaseModel):
+    title: str
+    problem: str
+    glossary: list[GlossaryEntry] = []
+    event_storming: EventStorming = EventStorming()
+    needs_architecture_review: bool = False
+    architecture_notes: str = ""
+    open_questions: list[str] = []
+
+
+class DiscoveryTurn(BaseModel):
+    message: str
+    done: bool
+    result: DiscoveryResult | None = None
+
+
+class RefinedTask(BaseModel):
+    title: str
+
+
+class RefinementOutput(BaseModel):
+    title: str
+    user_story: str
+    acceptance_criteria: list[str] = Field(min_length=1)
+    tasks: list[RefinedTask] = Field(min_length=1)

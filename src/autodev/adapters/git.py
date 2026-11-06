@@ -60,6 +60,17 @@ class GitRepo:
         self._run("commit", "-m", message)
         return self.head()
 
+    def commit_paths(self, paths: list[str], message: str) -> str | None:
+        """Commit only changes under `paths` (missing paths are skipped); None if there are none."""
+        existing = [p for p in paths if (self.path / p).exists()]
+        if not existing:
+            return None
+        if not self._run("status", "--porcelain", "--", *existing).stdout.strip():
+            return None
+        self._run("add", "-A", "--", *existing)
+        self._run("commit", "-m", message, "--only", "--", *existing)
+        return self.head()
+
     def head(self) -> str:
         return self._run("rev-parse", "HEAD").stdout.strip()
 

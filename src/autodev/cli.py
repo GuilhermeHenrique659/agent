@@ -6,25 +6,33 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.table import Table
 
 from autodev.adapters.claude_sdk_runtime import ClaudeSdkRuntime
+from autodev.adapters.console_io import ConsoleIO
 from autodev.adapters.git import GitRepo
 from autodev.adapters.knowledge_folder import KnowledgeFolder
 from autodev.config import ConfigError, load_config
 from autodev.config.models import ProjectConfig
-from autodev.domain.story import InvalidTransition
+from autodev.domain.story import InvalidTransition, Story, StoryStatus
 from autodev.gates.runner import run_gates
+from autodev.pipeline.approval import approve_story
+from autodev.pipeline.refinement import refine_story
+from autodev.pipeline.request_flow import handle_request
 from autodev.pipeline.run_log import RunLog
 from autodev.pipeline.state_store import StoryStore
+from autodev.pipeline.story_docs import render_story_summary
 from autodev.pipeline.story_runner import RunError, StoryRunner
 from autodev.ports.agent_runtime import AgentRuntime
+from autodev.ports.user_io import UserIO
 
 app = typer.Typer(help="Orchestrate AI agents to build software.", no_args_is_help=True)
 console = Console()
 err_console = Console(stderr=True)
 
 PathArg = Annotated[Path, typer.Argument(help="Project root (default: current directory).")]
+PathOpt = Annotated[Path, typer.Option(help="Project root.")]
 
 
 @app.command()
@@ -94,27 +102,40 @@ def make_runtime(config: ProjectConfig, root: Path) -> AgentRuntime:
     return ClaudeSdkRuntime(settings=settings, setting_sources=config.runtime.setting_sources)
 
 
-@app.command()
-def run(story_id: str, path: Annotated[Path, typer.Option(help="Project root.")] = Path()) -> None:
-    """Implement an approved story (TDD per task), then review it, up to IN_QA."""
-    try:
-        config = load_config(path)
-        runner = StoryRunner(
-            config,
-            path,
-            make_runtime(config, path),
-            GitRepo(path),
-            StoryStore(path),
-            KnowledgeFolder(path),
-            lambda sid: RunLog(path, sid),
-        )
-        story = asyncio.run(runner.run(story_id))
-    except (ConfigError, RunError) as exc:
-        err_console.print(f"[red]Error:[/red] {exc}")
-        raise typer.Exit(1) from exc
+def make_io() -> UserIO:
+    """Factory for the user IO; tests monkeypatch it."""
+    return ConsoleIO()
+
+
+def _run_story(config: ProjectConfig, path: Path, runtime: AgentRuntime, story_id: str) -> Story:
+    runner = StoryRunner(
+        config,
+        path,
+        runtime,
+        GitRepo(path),
+        StoryStore(path),
+        KnowledgeFolder(path),
+        lambda sid: RunLog(path, sid),
+    )
+    return asyncio.run(runner.run(story_id))
+
+
+def _print_final_status(story: Story) -> None:
     console.print(f"{story.id}: {story.status.value}")
     if story.blocked_reason:
         console.print(f"Blocked: {story.blocked_reason}", markup=False)
+
+
+@app.command()
+def run(story_id: str, path: PathOpt = Path()) -> None:
+    """Implement an approved story (TDD per task), then review it, up to IN_QA."""
+    try:
+        config = load_config(path)
+        story = _run_story(config, path, make_runtime(config, path), story_id)
+    except (ConfigError, RunError) as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    _print_final_status(story)
 
 
 @app.command()
@@ -134,4 +155,150 @@ def resume(
         err_console.print(f"[red]Error:[/red] Story {story_id} not found.")
         raise typer.Exit(1) from exc
     store.save(story)
+    console.print(f"{story.id}: {story.status.value}")
+
+
+@app.command()
+def request(
+    text: Annotated[str | None, typer.Argument(help="What to build (asked if omitted).")] = None,
+    path: PathOpt = Path(),
+) -> None:
+    """Take a request through discovery and refinement, then approve it."""
+    try:
+        config = load_config(path)
+        runtime = make_runtime(config, path)
+        io = make_io()
+        if not text or not text.strip():
+            text = io.ask("Describe your request")
+        store = StoryStore(path)
+        story = asyncio.run(
+            handle_request(
+                text,
+                config=config,
+                project_root=path,
+                runtime=runtime,
+                store=store,
+                context=KnowledgeFolder(path),
+                io=io,
+                log_factory=lambda sid: RunLog(path, sid),
+            )
+        )
+        _review_loop(story, config, path, runtime, io, store)
+    except (ConfigError, RunError) as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+
+def _review_loop(
+    story: Story,
+    config: ProjectConfig,
+    path: Path,
+    runtime: AgentRuntime,
+    io: UserIO,
+    store: StoryStore,
+) -> None:
+    io.show(render_story_summary(story))
+    while True:
+        choice = io.ask("[a]pprove, [f]eedback, [l]ater").strip().lower()
+        if choice == "a":
+            approve_story(
+                story.id, config=config, project_root=path, repo=GitRepo(path), store=store
+            )
+            console.print(f"{story.id}: approved")
+            if io.ask("Implement now? [y/N]").strip().lower() == "y":
+                _print_final_status(_run_story(config, path, runtime, story.id))
+            return
+        if choice == "f":
+            feedback = io.ask("Feedback")
+            asyncio.run(
+                refine_story(
+                    story,
+                    config=config,
+                    project_root=path,
+                    runtime=runtime,
+                    context=KnowledgeFolder(path),
+                    log=RunLog(path, story.id),
+                    feedback=feedback,
+                )
+            )
+            store.save(story)
+            io.show(render_story_summary(story))
+        elif choice == "l":
+            console.print(
+                f"Continue later with `autodev approve {story.id}` "
+                f'or `autodev refine {story.id} -m "..."`.',
+                markup=False,
+            )
+            return
+
+
+@app.command()
+def approve(story_id: str, path: PathOpt = Path()) -> None:
+    """Approve a refined story and commit its domain docs."""
+    try:
+        config = load_config(path)
+        story = approve_story(
+            story_id,
+            config=config,
+            project_root=path,
+            repo=GitRepo(path),
+            store=StoryStore(path),
+        )
+    except (ConfigError, RunError) as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    console.print(f"{story.id}: {story.status.value}")
+
+
+@app.command()
+def refine(
+    story_id: str,
+    message: Annotated[str, typer.Option("--message", "-m", help="Feedback for the refiner.")],
+    path: PathOpt = Path(),
+) -> None:
+    """Refine a discovered or refined story again, applying feedback."""
+    try:
+        config = load_config(path)
+        store = StoryStore(path)
+        try:
+            story = store.get(story_id)
+        except KeyError as exc:
+            raise RunError(f"Story {story_id} not found") from exc
+        if story.status not in (StoryStatus.DISCOVERED, StoryStatus.REFINED):
+            raise RunError(
+                f"Story {story.id} is {story.status.value}; "
+                "only discovered or refined stories can be refined"
+            )
+        asyncio.run(
+            refine_story(
+                story,
+                config=config,
+                project_root=path,
+                runtime=make_runtime(config, path),
+                context=KnowledgeFolder(path),
+                log=RunLog(path, story.id),
+                feedback=message,
+            )
+        )
+        store.save(story)
+    except (ConfigError, RunError) as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    console.print(Markdown(render_story_summary(story)))
+    console.print(f"{story.id}: {story.status.value}")
+
+
+@app.command()
+def show(story_id: str, path: PathOpt = Path()) -> None:
+    """Show a story: user story, acceptance criteria, tasks and status."""
+    try:
+        load_config(path)
+        story = StoryStore(path).get(story_id)
+    except ConfigError as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except KeyError as exc:
+        err_console.print(f"[red]Error:[/red] Story {story_id} not found.")
+        raise typer.Exit(1) from exc
+    console.print(Markdown(render_story_summary(story)))
     console.print(f"{story.id}: {story.status.value}")

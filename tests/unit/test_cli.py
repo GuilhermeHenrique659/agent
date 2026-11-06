@@ -1,4 +1,5 @@
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -10,9 +11,18 @@ from autodev.adapters.git import GitRepo
 from autodev.cli import app
 from autodev.domain.role import Role
 from autodev.domain.story import Story, StoryStatus, Task
-from autodev.pipeline.outputs import ImplementerOutput, ReviewOutput, TestWriterOutput
+from autodev.pipeline.outputs import (
+    DiscoveryResult,
+    DiscoveryTurn,
+    GlossaryEntry,
+    ImplementerOutput,
+    RefinedTask,
+    RefinementOutput,
+    ReviewOutput,
+    TestWriterOutput,
+)
 from autodev.pipeline.state_store import StoryStore
-from tests.fakes import FakeAgentRuntime, Step
+from tests.fakes import FakeAgentRuntime, FakeIO, Step
 from tests.integration.conftest import git
 from tests.unit.test_tdd import CHECK, IMPL_BAD, IMPL_GOOD
 
@@ -180,3 +190,139 @@ def test_make_runtime_with_missing_settings_file_raises_config_error(tmp_path: P
     config = ProjectConfig(runtime=RuntimeConfig(settings="missing.json"))
     with pytest.raises(ConfigError, match=r"missing\.json"):
         cli.make_runtime(config, tmp_path)
+
+
+def refined_output(title: str = "Refined") -> RefinementOutput:
+    return RefinementOutput(
+        title=title,
+        user_story="As a buyer, I want to pay",
+        acceptance_criteria=["Given a cart When paid Then done"],
+        tasks=[RefinedTask(title="first")],
+    )
+
+
+def discovery_done() -> Step:
+    result = DiscoveryResult(
+        title="Checkout",
+        problem="Cannot pay",
+        glossary=[GlossaryEntry(term="Cart", definition="Items")],
+    )
+    return Step(DiscoveryTurn(message="Clear enough", done=True, result=result))
+
+
+def setup_git_project(root: Path) -> None:
+    runner.invoke(app, ["init", str(root)])
+    repo = GitRepo(root)
+    repo.init("main")
+    git(root, "config", "user.name", "Test")
+    git(root, "config", "user.email", "test@example.com")
+    git(root, "config", "commit.gpgsign", "false")
+    repo.commit_all("initial")
+
+
+def patch_factories(monkeypatch: pytest.MonkeyPatch, fake: FakeAgentRuntime, io: FakeIO) -> None:
+    monkeypatch.setattr(cli, "make_runtime", lambda config, root: fake)
+    monkeypatch.setattr(cli, "make_io", lambda: io)
+
+
+def test_request_flow_approve_and_skip_implementation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup_git_project(tmp_path)
+    fake = FakeAgentRuntime()
+    fake.script(Role.DISCOVERY, discovery_done())
+    fake.script(Role.REFINER, Step(refined_output()))
+    io = FakeIO("a", "n")
+    patch_factories(monkeypatch, fake, io)
+    result = runner.invoke(app, ["request", "Pay with card", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    story = StoryStore(tmp_path).get("S-0001")
+    assert story.status == StoryStatus.APPROVED
+    assert any("As a buyer, I want to pay" in text and "first" in text for text in io.shown)
+    assert io.prompts == ["[a]pprove, [f]eedback, [l]ater", "Implement now? [y/N]"]
+    log = subprocess.run(
+        ["git", "log", "-1", "--format=%s"], cwd=tmp_path, capture_output=True, text=True
+    ).stdout.strip()
+    assert log == "docs(S-0001): discovery and refinement"
+    assert "approved" in result.output
+
+
+def test_request_feedback_then_later(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    setup_git_project(tmp_path)
+    fake = FakeAgentRuntime()
+    fake.script(Role.DISCOVERY, discovery_done())
+    fake.script(Role.REFINER, Step(refined_output()), Step(refined_output("Second")))
+    io = FakeIO("x", "f", "split it", "l")
+    patch_factories(monkeypatch, fake, io)
+    result = runner.invoke(app, ["request", "Pay with card", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "autodev approve S-0001" in result.output
+    story = StoryStore(tmp_path).get("S-0001")
+    assert story.status == StoryStatus.REFINED
+    assert story.title == "Second"
+    assert "split it" in fake.requests_for(Role.REFINER)[1].prompt
+    assert len(io.shown) == 3  # discovery turn + two summaries
+
+
+def test_request_without_text_asks_for_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    setup_git_project(tmp_path)
+    fake = FakeAgentRuntime()
+    fake.script(Role.DISCOVERY, discovery_done())
+    fake.script(Role.REFINER, Step(refined_output()))
+    io = FakeIO("Pay with card", "l")
+    patch_factories(monkeypatch, fake, io)
+    result = runner.invoke(app, ["request", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert StoryStore(tmp_path).get("S-0001").description.count("Pay with card") >= 1
+    assert "Pay with card" in fake.messages_for(Role.DISCOVERY)[0]
+
+
+def refined_story(root: Path, status: StoryStatus = StoryStatus.REFINED) -> None:
+    setup_git_project(root)
+    story = Story(
+        "S-0001",
+        "Pay",
+        description="## User story\nAs a buyer, I want to pay\n\n## Request\nraw\n",
+        status=status,
+        acceptance_criteria=["Given a cart When paid Then done"],
+        tasks=[Task("T1", "first")],
+    )
+    StoryStore(root).save(story)
+
+
+def test_approve_command(tmp_path: Path) -> None:
+    refined_story(tmp_path)
+    result = runner.invoke(app, ["approve", "S-0001", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "approved" in result.output
+    assert StoryStore(tmp_path).get("S-0001").status == StoryStatus.APPROVED
+    again = runner.invoke(app, ["approve", "S-0001", "--path", str(tmp_path)])
+    assert again.exit_code == 1
+    missing = runner.invoke(app, ["approve", "S-9999", "--path", str(tmp_path)])
+    assert missing.exit_code == 1
+
+
+def test_refine_command_with_feedback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    refined_story(tmp_path)
+    fake = FakeAgentRuntime()
+    fake.script(Role.REFINER, Step(refined_output("Better")))
+    patch_factories(monkeypatch, fake, FakeIO())
+    result = runner.invoke(
+        app, ["refine", "S-0001", "-m", "make it smaller", "--path", str(tmp_path)]
+    )
+    assert result.exit_code == 0, result.output
+    assert "make it smaller" in fake.requests[0].prompt
+    assert StoryStore(tmp_path).get("S-0001").title == "Better"
+    StoryStore(tmp_path).save(Story("S-0002", "x", status=StoryStatus.APPROVED, description="d"))
+    bad = runner.invoke(app, ["refine", "S-0002", "-m", "x", "--path", str(tmp_path)])
+    assert bad.exit_code == 1
+
+
+def test_show_command(tmp_path: Path) -> None:
+    refined_story(tmp_path)
+    result = runner.invoke(app, ["show", "S-0001", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    for expected in ("Pay", "As a buyer", "Given a cart", "T1", "refined"):
+        assert expected in result.output
+    missing = runner.invoke(app, ["show", "S-9999", "--path", str(tmp_path)])
+    assert missing.exit_code == 1

@@ -34,6 +34,7 @@ Pedido → DISCOVERY → REFINAMENTO → [aprovação humana] → IMPLEMENTAÇÃ
 12. **Falhas**: violação de regra do TDD (ou erro do agente) → `reset_hard` para antes da tentativa e repete com feedback; testes/gates falhando → mantém o commit e corrige em cima. Orçamento `limits.max_attempts` por fase (red/green) por task; esgotou → BLOCKED. Commits de correção de review podem tocar testes, mas passam pelos gates.
 13. **Estado do orquestrador fora do git**: `.agent/backlog/` e `.agent/runs/` são ignorados via `.agent/.gitignore` (criado pelo `init`), senão o estado mudaria ao trocar de branch e sujaria os commits. `autodev run` recusa se não estiverem ignorados.
 14. **Settings/autenticação dos agentes** (`runtime` no config): por padrão só as settings do projeto-alvo (`setting_sources: [project]`). Quando a autenticação do Claude Code vem de um `apiKeyHelper` em `~/.claude/settings.json` (ex.: gateways corporativos), então é preciso `runtime.settings` (JSON mínimo, ex. só o `apiKeyHelper`; relativo a `.agent/`) ou `setting_sources: [user, project]` (herda também CLAUDE.md global, hooks, plugins). `cli_path` apontando para um wrapper do `claude` não funcionou (exit 71). Verificado só rodando de dentro de uma sessão do Claude Code. `max_budget_usd` opcional por papel.
+15. **Discovery/refinamento**: o orquestrador conduz o chat (cada turno é um `DiscoveryTurn` JSON); termina quando o agente devolve `done` + resultado, ou pelo `/done` do usuário, com teto `limits.max_discovery_turns`. Agentes de discovery/refiner são só leitura (Read/Grep/Glob) e devolvem dados; o **código** escreve glossary.md e events.md. Conversa e documentos no idioma do pedido. O `approve` exige estar na main e commita só `.agent/domain` e `.agent/architecture` (`docs(<id>): ...`) antes de gravar APPROVED.
 
 ## Estrutura do `.agent/` no projeto-alvo
 
@@ -53,21 +54,25 @@ runs/                logs de execução (alimentam a auto-melhoria)
 
 ```
 src/autodev/
-  cli.py               init | status | check | run | resume   (futuro: request | approve | improve)
+  cli.py               init | status | check | request | approve | refine | show | run | resume   (futuro: improve)
   config/              models.py (pydantic, extra="forbid"), loader.py (load_config, ConfigError)
   domain/              role.py (Role), story.py (Story, Task, StoryStatus, InvalidTransition)
   pipeline/            state_store.py (StoryStore: save/get/has/values/next_id)
                        story_runner.py (StoryRunner: red → green → gates por task, depois review loop → IN_QA)
                        prompts.py (instruções por papel + builders dos prompts de tarefa)
                        outputs.py (saídas tipadas dos agentes), run_log.py (JSONL em .agent/runs/)
+                       discovery.py (chat: DiscoveryTurn por turno, /done, limite de turnos), refinement.py
+                       domain_docs.py (mescla glossary.md e acrescenta events.md, por código), story_docs.py
+                       request_flow.py (pedido → DRAFT → discovery → docs → REFINED), approval.py
   prompts/             instruções embutidas por papel (test_writer, implementer, reviewer)
-  ports/               agent_runtime.py (AgentRuntime, AgentRequest, AgentOutcome, AgentError), context_source.py
+  ports/               agent_runtime.py (AgentRuntime.run / start_conversation → Conversation), context_source.py, user_io.py
   templates/agent/     template do .agent/ copiado pelo `autodev init`
   gates/               runner.py (CommandGate, run_gates: build→test→lint, para na 1ª falha)
                        tdd.py (TddGuard: check_red / check_green)
   adapters/            git.py (GitRepo: ... reset_hard, is_ignored), claude_sdk_runtime.py (build_options, deny_git_hook),
                        git_guard.py (is_forbidden_git_command), knowledge_folder.py (ContextSource)
-  futuro: adapters/ (interactive_source, file_queue_source, local_review), phases de discovery/qa/merge, improve/
+  adapters/console_io.py (UserIO no terminal)
+  futuro: file_queue_source, local_review, qa/merge, improve/
 tests/fakes.py         FakeAgentRuntime roteirizável (passos por papel, podem editar arquivos)
 ```
 
@@ -82,8 +87,8 @@ Regras da `Story` (em `domain/story.py`): avanço só pela cadeia `draft→disco
 | 1 | Esqueleto, config, domínio Story/Task, StoryStore, `init`/`status` | ✅ feito |
 | 2 | Gates build/test/lint, adapter git, gate TDD red→green (sem LLM), `autodev check` | ✅ feito |
 | 3 | `ClaudeSdkRuntime` + `FakeAgentRuntime`, implementação e revisão por agente, `autodev run <story>`, `autodev resume` | ✅ feito (teste live passou) |
-| 4 | Discovery interativo (UL, event storming) + refinamento + `autodev approve` | próximo |
-| 5 | QA, loop de retrabalho → BLOCKED, merge e conflitos → DONE | |
+| 4 | Discovery interativo (UL, event storming) + refinamento + `request`/`approve`/`refine`/`show` | ✅ feito (discovery ainda não testado com o modelo real) |
+| 5 | QA, loop de retrabalho → BLOCKED, merge e conflitos → DONE | próximo |
 | 6 | Briefing técnico (projeto vazio) e revisão de arquitetura/ADRs | |
 | 7 | `autodev improve` (retro + refatoração) e geração de regras de lint a partir de `standards/` | |
 | depois | RAG, PR no GitHub, worktrees/paralelismo, Jira | |

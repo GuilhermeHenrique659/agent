@@ -29,5 +29,15 @@ class AgentError(Exception):
     pass
 
 
+class Conversation[T: BaseModel](Protocol):
+    async def send(self, message: str) -> AgentOutcome[T]: ...
+
+    async def close(self) -> None: ...
+
+
 class AgentRuntime(Protocol):
     async def run[T: BaseModel](self, request: AgentRequest[T]) -> AgentOutcome[T]: ...
+
+    async def start_conversation[T: BaseModel](self, request: AgentRequest[T]) -> Conversation[T]:
+        """Open a multi-turn session; `request.prompt` is not sent, the caller sends messages."""
+        ...

@@ -91,6 +91,7 @@ class LimitsConfig(BaseModel):
 
     max_attempts: int = Field(default=3, ge=1)
     command_timeout_s: int = Field(default=900, ge=1)
+    max_discovery_turns: int = Field(default=20, ge=1)
 
 
 DEFAULT_TEST_GLOBS = [

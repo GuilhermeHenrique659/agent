@@ -2,7 +2,7 @@
 
 CLI em Python que orquestra agentes de IA para construir software. Ele leva um pedido (funcionalidade, correção ou melhoria) até o merge na branch principal. No caminho, entende o domínio com você, quebra o trabalho em stories, implementa com TDD e valida com gates automáticos e revisão por agentes.
 
-> **Status:** em desenvolvimento. Hoje funcionam `init`, `status`, `check`, `run` (implementação com TDD + revisão, a partir de uma story aprovada escrita à mão) e `resume`. Discovery, QA e merge ainda não. O pipeline com agentes está no [roadmap](#roadmap).
+> **Status:** em desenvolvimento. Hoje funcionam o pedido com discovery e refinamento (`request`, `approve`, `refine`, `show`), a implementação com TDD e revisão (`run`, `resume`) e os gates (`check`). QA e merge ainda não. O pipeline com agentes está no [roadmap](#roadmap).
 
 ## Como funciona
 
@@ -34,6 +34,10 @@ uv run autodev --help
 
 ```bash
 uv run autodev init /caminho/do/projeto     # cria /caminho/do/projeto/.agent/
+uv run autodev request "quero X" --path /caminho   # discovery no terminal (/done encerra) → refinamento → aprovar
+uv run autodev show S-0001 --path /caminho
+uv run autodev refine S-0001 -m "ajuste" --path /caminho
+uv run autodev approve S-0001 --path /caminho
 uv run autodev status /caminho/do/projeto   # lista as stories do backlog
 uv run autodev check /caminho/do/projeto    # roda os gates de build, testes e lint
 uv run autodev run S-0001 --path /caminho   # implementa uma story aprovada até IN_QA
@@ -95,8 +99,8 @@ runtime:
 | 1 | Esqueleto, configuração, domínio Story/Task, backlog, `init`/`status` | ✅ |
 | 2 | Gates de build/test/lint, git, gate de TDD, `autodev check` | ✅ |
 | 3 | Runtime de agentes (Claude Agent SDK), implementação e revisão, `autodev run`/`resume` | ✅ |
-| 4 | Discovery interativo e refinamento, `autodev approve` | próximo |
-| 5 | QA, retrabalho, merge e conflitos | |
+| 4 | Discovery interativo e refinamento, `request`/`approve`/`refine`/`show` | ✅ |
+| 5 | QA, retrabalho, merge e conflitos | próximo |
 | 6 | Briefing técnico e revisão de arquitetura com ADRs | |
 | 7 | `autodev improve` e regras de lint a partir de `standards/` | |
 | depois | RAG, PR no GitHub, tasks em paralelo, Jira | |

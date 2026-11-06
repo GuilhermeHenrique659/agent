@@ -161,3 +161,22 @@ def test_is_ignored(repo: GitRepo) -> None:
     (repo.path / ".gitignore").write_text("state/\n")
     assert repo.is_ignored("state/")
     assert not repo.is_ignored("other/")
+
+
+def test_commit_paths_stages_only_given_paths_and_returns_none_without_changes(
+    repo: GitRepo,
+) -> None:
+    assert repo.commit_paths(["docs"], "nothing") is None
+    (repo.path / "docs").mkdir()
+    (repo.path / "docs" / "a.md").write_text("a")
+    (repo.path / "README.md").write_text("changed\n")
+    (repo.path / "other.txt").write_text("o")
+    before = repo.head()
+    sha = repo.commit_paths(["docs", "missing-dir"], "docs: add a")
+    assert sha is not None and sha == repo.head() != before
+    assert repo.changed_files(sha) == ["docs/a.md"]
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=repo.path, capture_output=True, text=True
+    ).stdout
+    assert " M README.md" in status and "?? other.txt" in status
+    assert repo.commit_paths(["docs"], "again") is None

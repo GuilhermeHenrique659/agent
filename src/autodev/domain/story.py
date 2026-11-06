@@ -71,6 +71,30 @@ class Story:
             raise InvalidTransition("Review requires every task to be done")
         self.status = to
 
+    def record_discovery(self, title: str, description: str) -> None:
+        if self.status != StoryStatus.DRAFT:
+            raise InvalidTransition(f"Cannot record discovery from {self.status}")
+        self.title = title
+        self.description = description
+        self.status = StoryStatus.DISCOVERED
+
+    def refine(
+        self,
+        title: str,
+        description: str,
+        acceptance_criteria: list[str],
+        task_titles: list[str],
+    ) -> None:
+        if self.status not in (StoryStatus.DISCOVERED, StoryStatus.REFINED):
+            raise InvalidTransition(f"Cannot refine from {self.status}")
+        if not (acceptance_criteria and task_titles):
+            raise InvalidTransition("Refinement requires acceptance criteria and tasks")
+        self.title = title
+        self.description = description
+        self.acceptance_criteria = list(acceptance_criteria)
+        self.tasks = [Task(f"T{i}", t) for i, t in enumerate(task_titles, start=1)]
+        self.status = StoryStatus.REFINED
+
     def send_back(self, reason: str, max_attempts: int) -> None:
         if self.status not in _REVIEW_STATES:
             raise InvalidTransition(f"Cannot send back from {self.status}")

@@ -1,6 +1,4 @@
 import asyncio
-import shutil
-from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Annotated
 
@@ -10,10 +8,10 @@ from rich.markdown import Markdown
 from rich.table import Table
 
 from autodev.adapters.claude_sdk_runtime import ClaudeSdkRuntime
-from autodev.adapters.claude_settings import project_hook_events
+from autodev.adapters.claude_settings import hooks_warning, project_hook_events
 from autodev.adapters.console_io import ConsoleIO
-from autodev.adapters.git import GitRepo
-from autodev.adapters.knowledge_folder import KnowledgeFolder
+from autodev.adapters.git import GitError, GitRepo
+from autodev.adapters.knowledge_folder import make_context
 from autodev.config import ConfigError, load_config
 from autodev.config.models import ProjectConfig
 from autodev.domain.story import InvalidTransition, Story, StoryStatus
@@ -22,6 +20,10 @@ from autodev.improve.code_scan import run_code_scan
 from autodev.improve.lint_rules import run_lint_proposal
 from autodev.improve.process_retro import NoRunsYet, run_process_retro
 from autodev.improve.state import new_done_count, should_suggest
+from autodev.onboarding.doctor import DOCTOR_HINTS, check_connection, describe
+from autodev.onboarding.onboard import OnboardError
+from autodev.onboarding.onboard import onboard as run_onboard
+from autodev.onboarding.scaffold import create_agent_dir
 from autodev.pipeline.adr import adr_dir, has_decisions
 from autodev.pipeline.approval import approve_story
 from autodev.pipeline.briefing import is_empty_repo, run_brief
@@ -49,20 +51,62 @@ def init(path: PathArg = Path()) -> None:
     if target.exists():
         err_console.print(f"[red]Error:[/red] {target} already exists.")
         raise typer.Exit(1)
-    with as_file(files("autodev") / "templates" / "agent") as template:
-        shutil.copytree(template, target)
+    create_agent_dir(path)
     console.print(f"Created {target}")
     _warn_about_hooks(path)
 
 
 def _warn_about_hooks(path: Path) -> None:
     if events := project_hook_events(path):
-        console.print(
-            f"Warning: this project defines Claude Code hooks ({', '.join(events)}) in "
-            ".claude/settings.json. They also run inside autodev agent sessions; make sure "
-            "none of them commit, push or switch branches.",
-            markup=False,
+        console.print(hooks_warning(events), markup=False)
+
+
+@app.command()
+def onboard(
+    path: PathArg = Path(),
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Accept every default without asking.")
+    ] = False,
+    no_brief: Annotated[
+        bool, typer.Option("--no-brief", help="Skip the technical briefing step.")
+    ] = False,
+) -> None:
+    """Integrate autodev into a new or existing project (idempotent, interactive)."""
+    try:
+        report = asyncio.run(
+            run_onboard(
+                path,
+                io=make_io(),
+                make_runtime=make_runtime,
+                yes=yes,
+                run_brief_step=not no_brief,
+                home=Path.home(),
+            )
         )
+    except (OnboardError, ConfigError, GitError) as exc:
+        err_console.print(f"[red]Error:[/red] {exc}", markup=True, highlight=False)
+        raise typer.Exit(1) from exc
+    for action in report.actions:
+        console.print(f"- {action}", markup=False, soft_wrap=True)
+    console.print("Next steps:")
+    for step in report.next_steps:
+        console.print(f"- {step}", markup=False, soft_wrap=True)
+
+
+@app.command()
+def doctor(path: PathOpt = Path()) -> None:
+    """Check that the agent runtime can reach the model (one cheap call)."""
+    try:
+        config = load_config(path)
+        result = asyncio.run(check_connection(config, path, make_runtime(config, path)))
+    except ConfigError as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    if not result.ok:
+        err_console.print(result.detail, markup=False, highlight=False)
+        err_console.print(DOCTOR_HINTS, markup=False, highlight=False)
+        raise typer.Exit(1)
+    console.print(describe(result), markup=False)
 
 
 @app.command()
@@ -138,7 +182,7 @@ def _run_brief(
             project_root=path,
             runtime=runtime,
             repo=repo,
-            context=KnowledgeFolder(path),
+            context=make_context(config, path),
             io=io,
             log=RunLog(path, "brief"),
         )
@@ -169,7 +213,7 @@ def _run_story(config: ProjectConfig, path: Path, runtime: AgentRuntime, story_i
         runtime,
         GitRepo(path),
         StoryStore(path),
-        KnowledgeFolder(path),
+        make_context(config, path),
         lambda sid: RunLog(path, sid),
     )
     return asyncio.run(runner.run(story_id))
@@ -255,7 +299,7 @@ def request(
                 project_root=path,
                 runtime=runtime,
                 store=store,
-                context=KnowledgeFolder(path),
+                context=make_context(config, path),
                 io=io,
                 log_factory=lambda sid: RunLog(path, sid),
             )
@@ -290,7 +334,7 @@ def discover(story_id: str, path: PathOpt = Path()) -> None:
                 project_root=path,
                 runtime=runtime,
                 store=store,
-                context=KnowledgeFolder(path),
+                context=make_context(config, path),
                 io=io,
                 log=RunLog(path, story.id),
             )
@@ -328,7 +372,7 @@ def _review_loop(
                     config=config,
                     project_root=path,
                     runtime=runtime,
-                    context=KnowledgeFolder(path),
+                    context=make_context(config, path),
                     log=RunLog(path, story.id),
                     feedback=feedback,
                 )
@@ -387,7 +431,7 @@ def refine(
                 config=config,
                 project_root=path,
                 runtime=make_runtime(config, path),
-                context=KnowledgeFolder(path),
+                context=make_context(config, path),
                 log=RunLog(path, story.id),
                 feedback=message,
             )
@@ -433,7 +477,7 @@ def improve(
         io = make_io()
         store = StoryStore(path)
         repo = GitRepo(path)
-        context = KnowledgeFolder(path)
+        context = make_context(config, path)
         log = RunLog(path, "improve")
         if process or both:
             try:

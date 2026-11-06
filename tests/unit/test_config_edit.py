@@ -4,7 +4,7 @@ import pytest
 
 from autodev.config import ConfigError, load_config
 from autodev.pipeline import config_edit
-from autodev.pipeline.config_edit import set_commands
+from autodev.pipeline.config_edit import set_commands, set_value
 from autodev.pipeline.outputs import Commands
 
 CONFIG = """# header comment
@@ -71,3 +71,73 @@ def test_restores_file_when_result_invalid(tmp_path: Path, monkeypatch: pytest.M
     with pytest.raises(ConfigError):
         set_commands(tmp_path, Commands(test="pytest"))
     assert path.read_text() == CONFIG
+
+
+FULL = """commands:
+  test: null
+git:
+  main_branch: main
+  remote: null  # push target
+runtime:
+  settings: null
+agents:
+  defaults:
+    model: claude-opus-5-5  # model
+    # max_budget_usd: 5.0
+  roles:
+    qa:
+      effort: high
+"""
+
+
+def test_set_value_nested_keys_preserving_comments(tmp_path: Path) -> None:
+    path = write(tmp_path, FULL)
+    set_value(tmp_path, "git.remote", "origin")
+    set_value(tmp_path, "agents.defaults.model", "claude-sonnet-5-5")
+    text = path.read_text()
+    assert '  remote: "origin"  # push target\n' in text
+    assert '    model: "claude-sonnet-5-5"  # model\n' in text
+    config = load_config(tmp_path)
+    assert config.git.remote == "origin"
+    assert config.agents.defaults.model == "claude-sonnet-5-5"
+
+
+def test_set_value_inserts_missing_key_ignoring_commented_line(tmp_path: Path) -> None:
+    path = write(tmp_path, FULL)
+    set_value(tmp_path, "agents.defaults.max_budget_usd", 5.0)
+    text = path.read_text()
+    assert "    # max_budget_usd: 5.0\n" in text
+    assert "    max_budget_usd: 5.0\n  roles:\n" in text
+    assert load_config(tmp_path).agents.defaults.max_budget_usd == 5.0
+
+
+def test_set_value_creates_missing_parent_blocks(tmp_path: Path) -> None:
+    path = write(tmp_path, "commands:\n  test: null\n")
+    set_value(tmp_path, "context.paths", ["README.md"])
+    set_value(tmp_path, "agents.defaults.max_turns", 7)
+    assert path.read_text() == (
+        'commands:\n  test: null\ncontext:\n  paths: ["README.md"]\n'
+        "agents:\n  defaults:\n    max_turns: 7\n"
+    )
+    assert load_config(tmp_path).agents.defaults.max_turns == 7
+
+
+def test_set_value_list_and_number_and_null(tmp_path: Path) -> None:
+    path = write(tmp_path, FULL)
+    set_value(tmp_path, "context.paths", ["README.md", "docs/"])
+    set_value(tmp_path, "limits.max_attempts", 4)
+    set_value(tmp_path, "agents.roles.qa.effort", None)
+    text = path.read_text()
+    assert 'paths: ["README.md", "docs/"]' in text
+    assert "  max_attempts: 4\n" in text
+    assert "      effort: null\n" in text
+    config = load_config(tmp_path)
+    assert config.context.paths == ["README.md", "docs/"]
+    assert config.limits.max_attempts == 4
+
+
+def test_set_value_restores_on_invalid(tmp_path: Path) -> None:
+    path = write(tmp_path, FULL)
+    with pytest.raises(ConfigError):
+        set_value(tmp_path, "limits.max_attempts", "lots")
+    assert path.read_text() == FULL

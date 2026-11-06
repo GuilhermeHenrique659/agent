@@ -11,3 +11,11 @@ def project_hook_events(project_root: Path) -> list[str]:
         return []
     hooks = data.get("hooks") if isinstance(data, dict) else None
     return sorted(hooks) if isinstance(hooks, dict) else []
+
+
+def hooks_warning(events: list[str]) -> str:
+    return (
+        f"Warning: this project defines Claude Code hooks ({', '.join(events)}) in "
+        ".claude/settings.json. They also run inside autodev agent sessions; make sure "
+        "none of them commit, push or switch branches."
+    )

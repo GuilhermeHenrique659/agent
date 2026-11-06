@@ -71,6 +71,9 @@ class GitRepo:
         self._run("commit", "-m", message, "--only", "--", *existing)
         return self.head()
 
+    def remotes(self) -> list[str]:
+        return self._run("remote").stdout.split()
+
     def head(self) -> str:
         return self._run("rev-parse", "HEAD").stdout.strip()
 

@@ -25,6 +25,11 @@ runtime:
   # containing just {"apiKeyHelper": "..."} copied from ~/.claude/settings.json.
   settings: null
 
+# Existing docs in the repo that agents read in place, e.g. [README.md, docs/].
+# Directories contribute their *.md, *.txt, *.rst and *.adoc files (recursively).
+context:
+  paths: []
+
 # Files matching these globs (fnmatch on the repo-relative path; * also matches /) are test files.
 # A red commit may only touch test files, a green commit may not touch them.
 tdd:

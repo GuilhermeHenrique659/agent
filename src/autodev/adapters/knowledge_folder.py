@@ -1,4 +1,7 @@
+from collections.abc import Sequence
 from pathlib import Path
+
+from autodev.config.models import ProjectConfig
 
 _DIRS = (".agent/knowledge", ".agent/standards", ".agent/architecture/adr")
 _FILES = (
@@ -8,11 +11,13 @@ _FILES = (
     "AGENTS.md",
 )
 _RULES_DIR = ".claude/rules"
+_DOC_SUFFIXES = (".md", ".txt", ".rst", ".adoc")
 
 
 class KnowledgeFolder:
-    def __init__(self, project_root: Path) -> None:
+    def __init__(self, project_root: Path, extra_paths: Sequence[str] = ()) -> None:
         self._root = project_root
+        self._extra = tuple(extra_paths)
 
     def paths(self) -> list[Path]:
         found = [
@@ -23,4 +28,23 @@ class KnowledgeFolder:
         ]
         found += [self._root / f for f in _FILES if (self._root / f).is_file()]
         found += (self._root / _RULES_DIR).rglob("*.md")
+        for extra in self._extra:
+            found += self._extra_files(self._root / extra)
         return sorted({p.relative_to(self._root) for p in found if p.is_file()})
+
+    def _extra_files(self, target: Path) -> list[Path]:
+        if target.is_file():
+            return [target]
+        if not target.is_dir():
+            return []
+        return [
+            p
+            for p in target.rglob("*")
+            if p.suffix.lower() in _DOC_SUFFIXES
+            and not any(part.startswith(".") for part in p.relative_to(target).parts)
+        ]
+
+
+def make_context(config: ProjectConfig, path: Path) -> KnowledgeFolder:
+    """Context source for a project: the fixed knowledge files plus `context.paths`."""
+    return KnowledgeFolder(path, config.context.paths)

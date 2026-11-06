@@ -48,17 +48,22 @@ uv run autodev improve --path /caminho      # retro do processo (métricas → p
 uv run autodev improve --lint --path /caminho  # regras de lint a partir de standards/ (→ story)
 ```
 
-## Usar num projeto existente
+## Colocar o autodev num projeto (novo ou existente)
 
 ```bash
 uv tool install --editable ~/Desktop/projects/agent   # uma vez; o comando `autodev` fica no PATH
-cd ~/caminho/do/projeto
-autodev init                                          # cria .agent/
-# edite .agent/config.yaml (autenticação, git.main_branch, git.remote: null no primeiro teste, max_budget_usd)
-git add .agent && git commit -m "chore: add autodev"
-autodev brief                                         # documenta stack, ADRs e comandos a partir do código
-autodev request "quero X"
+autodev onboard ~/caminho/do/projeto                  # ou `autodev onboard` dentro da pasta
 ```
+
+O `onboard` é interativo e pode ser rodado de novo com segurança (só completa o que falta):
+
+1. cria a pasta e o repositório git se faltarem, e o `.agent/`;
+2. pergunta, com padrões detectados: branch principal, se pode fazer push no remote (padrão: não), autenticação (se o seu Claude Code usa `apiKeyHelper`, cria `.agent/auth.json` só com ele, fora do git), teto de custo por execução e documentação existente (`README.md`, `docs/`) como contexto, sem copiar;
+3. confere as convenções: oferece incluir `@AGENTS.md` no `CLAUDE.md` e avisa sobre hooks;
+4. testa a conexão com o modelo (centavos) antes de qualquer commit;
+5. commita `chore: onboard autodev` e oferece o briefing técnico (projeto vazio: cria o esqueleto).
+
+`--yes` aceita os padrões; `--no-brief` deixa o briefing para depois. `autodev doctor` testa a conexão a qualquer momento.
 
 Se o projeto já tem `CLAUDE.md`, `AGENTS.md`, `.claude/rules/` ou skills:
 

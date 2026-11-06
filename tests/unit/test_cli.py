@@ -689,3 +689,57 @@ def test_brief_warns_about_project_hooks(tmp_path: Path, monkeypatch: pytest.Mon
     result = runner.invoke(app, ["brief", "--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert "Warning: this project defines Claude Code hooks (PreToolUse, Stop)" in result.output
+
+
+def test_onboard_command_prints_actions_and_next_steps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autodev.onboarding.doctor import ConnectionAnswer
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    for var in ("GIT_AUTHOR", "GIT_COMMITTER"):
+        monkeypatch.setenv(f"{var}_NAME", "Test")
+        monkeypatch.setenv(f"{var}_EMAIL", "test@example.com")
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "app.py").write_text("x\n")
+    fake = FakeAgentRuntime()
+    fake.script(Role.IMPLEMENTER, Step(ConnectionAnswer(answer=5)))
+    patch_factories(monkeypatch, fake, FakeIO())
+    result = runner.invoke(app, ["onboard", str(project), "--yes", "--no-brief"])
+    assert result.exit_code == 0, result.output
+    assert "Created .agent/" in result.output
+    assert "Connection OK" in result.output
+    assert "autodev brief" in result.output
+    assert 'autodev request "<what you want>"' in result.output
+    assert (project / ".agent" / "config.yaml").is_file()
+
+
+def test_onboard_command_error_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_factories(monkeypatch, FakeAgentRuntime(), FakeIO("n"))
+    result = runner.invoke(app, ["onboard", str(tmp_path / "missing")])
+    assert result.exit_code == 1
+    assert "Nothing to do" in result.output
+
+
+def test_doctor_command_ok_and_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from autodev.onboarding.doctor import ConnectionAnswer
+    from tests.fakes import agent_error
+
+    runner.invoke(app, ["init", str(tmp_path)])
+    fake = FakeAgentRuntime()
+    fake.script(
+        Role.IMPLEMENTER,
+        Step(ConnectionAnswer(answer=5), cost_usd=0.01),
+        Step(agent_error("auth failed")),
+    )
+    patch_factories(monkeypatch, fake, FakeIO())
+    ok = runner.invoke(app, ["doctor", "--path", str(tmp_path)])
+    assert ok.exit_code == 0, ok.output
+    assert "Connection OK (claude-sonnet-5-5, $0.0100)" in ok.output
+    failed = runner.invoke(app, ["doctor", "--path", str(tmp_path)])
+    assert failed.exit_code == 1
+    assert "auth failed" in failed.output
+    assert "runtime.settings" in failed.output

@@ -200,3 +200,16 @@ def test_skills_resolution_and_template(tmp_path: Path) -> None:
     write_config(tmp_path, "agents:\n  defaults:\n    skills: 3\n")
     with pytest.raises(ConfigError, match="skills"):
         load_config(tmp_path)
+
+
+def test_context_paths_default_and_template(tmp_path: Path) -> None:
+    from importlib.resources import files
+
+    write_config(tmp_path, "")
+    assert load_config(tmp_path).context.paths == []
+    write_config(tmp_path, "context:\n  paths: [README.md, docs/]\n")
+    assert load_config(tmp_path).context.paths == ["README.md", "docs/"]
+    text: Any = (files("autodev") / "templates" / "agent" / "config.yaml").read_text()
+    assert "context:" in text
+    write_config(tmp_path, text)
+    assert load_config(tmp_path).context.paths == []

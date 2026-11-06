@@ -225,3 +225,24 @@ def test_churn_orders_by_commit_count_and_excludes_agent_dir(repo: GitRepo) -> N
         write_commit(repo, ".agent/notes.md", str(i), f"n{i}")
     assert repo.churn() == [("hot.py", 3), ("README.md", 1), ("a.py", 1), ("b.py", 1)]
     assert repo.churn(limit=2) == [("hot.py", 3), ("README.md", 1)]
+
+
+def test_remotes(repo: GitRepo, tmp_path: Path) -> None:
+    assert repo.remotes() == []
+    git(repo.path, "remote", "add", "origin", str(tmp_path))
+    git(repo.path, "remote", "add", "upstream", str(tmp_path))
+    assert repo.remotes() == ["origin", "upstream"]
+
+
+def test_commit_paths_on_unborn_repo(tmp_path: Path) -> None:
+    repo = GitRepo(tmp_path)
+    repo.init("main")
+    git(tmp_path, "config", "user.name", "Test")
+    git(tmp_path, "config", "user.email", "test@example.com")
+    git(tmp_path, "config", "commit.gpgsign", "false")
+    (tmp_path / ".agent").mkdir()
+    (tmp_path / ".agent" / "a.txt").write_text("a")
+    (tmp_path / "other.txt").write_text("o")
+    assert repo.commit_paths([".agent", "CLAUDE.md"], "chore: first") is not None
+    assert repo.tracked_files() == [".agent/a.txt"]
+    assert repo.commit_paths([".agent"], "again") is None

@@ -145,6 +145,8 @@ runtime:
 
 ## Desenvolvimento
 
+Se o seu ambiente define um índice de pacotes próprio (`UV_INDEX_URL`), use `uv run --frozen` para não reescrever o `uv.lock`, que aponta para o PyPI público.
+
 ```bash
 uv run pytest                     # testes
 uv run ruff check . && uv run ruff format --check .

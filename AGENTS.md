@@ -115,6 +115,8 @@ Regras da `Story` (em `domain/story.py`): avanço só pela cadeia `draft→disco
 
 Python 3.12+ via `uv` (o python do sistema é 3.9; não usar).
 
+O `uv.lock` aponta para o PyPI público. Se o seu ambiente define outro índice (`UV_INDEX_URL`/`UV_DEFAULT_INDEX`), use `uv run --frozen` / `uv sync --frozen` para não reescrever o lock; para atualizar dependências, rode `uv lock` sem essas variáveis e com acesso ao PyPI público.
+
 ```bash
 uv sync                                   # instalar dependências
 uv run pytest                             # testes

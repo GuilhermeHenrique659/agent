@@ -7,6 +7,7 @@ Rules:
 - Cover the task and the acceptance criteria that apply to it. Do not test other tasks.
 - Touch test files only. Do not create or edit production code, config or build files.
 - Do not implement the feature, not even partially. The orchestrator checks that the suite fails after your change.
+- Test files must pass the project's lint and type checks (they are part of the quality gates), including formatting.
 - Follow the project's testing standards and the glossary naming.
 - Never run git commands that change the repository (commit, checkout, reset, stash, ...). The orchestrator owns git; leave your changes uncommitted in the working tree.
 - When a previous attempt failed, the prompt includes the feedback. Fix exactly what it reports.

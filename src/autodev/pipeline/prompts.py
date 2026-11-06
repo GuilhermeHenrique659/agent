@@ -201,6 +201,22 @@ def build_merge_fix_prompt(
     )
 
 
+def build_test_fix_prompt(
+    story: Story,
+    task: Task,
+    base_branch: str,
+    context: list[Path],
+    gate_feedback: str | None,
+) -> str:
+    intro = (
+        "The implementation of this task is done, but the quality gates fail on test files. "
+        "Fix only the reported lint, format or type problems in those test files; "
+        "do not change what the tests assert. Touch only test files: no production code, "
+        "config or build files."
+    )
+    return _task_prompt(intro, story, task, base_branch, context, gate_feedback)
+
+
 def gate_feedback(report: GateReport) -> str:
     return "\n".join(f"Gate {r.name} failed:\n{r.output}" for r in report.failures)
 
@@ -219,6 +235,10 @@ def build_brief_prompt(context: list[Path], empty: bool) -> str:
         "tools: each command must set up or reuse the project environment by itself from the "
         "project files (examples: `uv run pytest`, `uv run ruff check .`, `npm ci && npm test`, "
         "`./gradlew test`); never assume tools are already installed. "
+        "If the stack has an auto-formatter or auto-fixer, also propose a self-contained "
+        "`format` command that formats and auto-fixes the whole project "
+        "(example: `uv run ruff format . && uv run ruff check --fix .`); autodev runs it "
+        "before every agent commit. "
         "For an existing codebase, read CLAUDE.md, AGENTS.md and .claude/rules/ "
         "first and do not restate conventions already documented there: the standards should "
         "only add what is missing. Ask a few focused questions per turn. Finish with done=true "

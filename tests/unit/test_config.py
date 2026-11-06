@@ -213,3 +213,16 @@ def test_context_paths_default_and_template(tmp_path: Path) -> None:
     assert "context:" in text
     write_config(tmp_path, text)
     assert load_config(tmp_path).context.paths == []
+
+
+def test_format_command_default_and_template(tmp_path: Path) -> None:
+    from importlib.resources import files
+
+    write_config(tmp_path, "")
+    assert load_config(tmp_path).commands.format is None
+    write_config(tmp_path, 'commands:\n  format: "ruff format ."\n')
+    assert load_config(tmp_path).commands.format == "ruff format ."
+    text: Any = (files("autodev") / "templates" / "agent" / "config.yaml").read_text()
+    assert "format: null" in text
+    write_config(tmp_path, text)
+    assert load_config(tmp_path).commands.format is None

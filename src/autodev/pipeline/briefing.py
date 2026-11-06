@@ -4,7 +4,7 @@ from autodev.adapters.git import GitError, GitRepo
 from autodev.config import load_config
 from autodev.config.models import ProjectConfig
 from autodev.domain.role import Role
-from autodev.gates.runner import run_gates
+from autodev.gates.runner import run_command, run_gates
 from autodev.pipeline import prompts
 from autodev.pipeline.adr import adr_dir, has_decisions, write_adr
 from autodev.pipeline.config_edit import set_commands
@@ -30,7 +30,13 @@ def render_tech_brief(brief: TechBrief) -> str:
     c = brief.commands
     commands = "\n".join(
         f"- {name}: {value}"
-        for name, value in (("build", c.build), ("test", c.test), ("lint", c.lint))
+        for name, value in (
+            ("build", c.build),
+            ("test", c.test),
+            ("lint", c.lint),
+            ("format", c.format),
+        )
+        if name != "format" or value is not None
     )
     parts = [f"## Summary\n{brief.summary}", f"## Decisions\n{adrs}", f"## Commands\n{commands}"]
     if brief.standards:
@@ -189,6 +195,14 @@ async def run_bootstrap(
     )
 
 
+def _format(config: ProjectConfig, project_root: Path, log: RunLog) -> None:
+    command = config.commands.format
+    if command is None:
+        return
+    code, output = run_command(command, project_root, config.limits.command_timeout_s)
+    log.append("format", ok=code == 0, detail=output[-_LOG_DETAIL_CHARS:])
+
+
 async def _bootstrap(
     spec: str,
     start_sha: str,
@@ -230,6 +244,7 @@ async def _bootstrap(
                 feedback = "The implementer made no changes."
                 continue
         else:
+            _format(config, project_root, log)
             prefix = "fix" if committed else "chore"
             repo.commit_all(f"{prefix}(bootstrap): project skeleton")
             committed = True

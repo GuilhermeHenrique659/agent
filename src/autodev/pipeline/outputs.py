@@ -114,6 +114,7 @@ class Commands(BaseModel):
     build: str | None = None
     test: str | None = None
     lint: str | None = None
+    format: str | None = None
 
 
 class TechBrief(BaseModel):

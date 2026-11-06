@@ -141,3 +141,12 @@ def test_set_value_restores_on_invalid(tmp_path: Path) -> None:
     with pytest.raises(ConfigError):
         set_value(tmp_path, "limits.max_attempts", "lots")
     assert path.read_text() == FULL
+
+
+def test_set_commands_writes_format(tmp_path: Path) -> None:
+    path = write(tmp_path)
+    set_commands(tmp_path, Commands(test="pytest", format="ruff format ."))
+    assert load_config(tmp_path).commands.format == "ruff format ."
+    assert '  format: "ruff format ."\n' in path.read_text()
+    set_commands(tmp_path, Commands(test="pytest"))
+    assert load_config(tmp_path).commands.format is None

@@ -28,7 +28,7 @@ from autodev.pipeline.outputs import (
 from autodev.pipeline.run_log import RunLog
 from autodev.pipeline.state_store import StoryStore
 from autodev.pipeline.story_runner import RunError, StoryRunner
-from tests.fakes import FakeAgentRuntime, Step, agent_error
+from tests.fakes import FakeAgentRuntime, Step, agent_error, write_formatter
 from tests.integration.conftest import git
 from tests.unit.test_tdd import CHECK, IMPL_BAD, IMPL_GOOD
 
@@ -101,6 +101,8 @@ def make_env(
     tasks: list[Task] | None = None,
     gitignore: bool = True,
     remote: str | None = None,
+    format: str | None = None,
+    files: dict[str, str] | None = None,
 ) -> Env:
     root = tmp_path / "proj"
     root.mkdir(parents=True)
@@ -114,6 +116,7 @@ def make_env(
     if gitignore:
         (root / ".agent" / ".gitignore").write_text("backlog/\nruns/\n")
     (root / "impl.py").write_text(IMPL_BAD)
+    writer(files or {})(root)
     story = Story(
         "S-0001",
         "Say two",
@@ -127,7 +130,7 @@ def make_env(
     repo.commit_all("initial")
     command = f"{shlex.quote(sys.executable)} -B tests/check.py"
     config = ProjectConfig(
-        commands=CommandsConfig(test=command, lint=lint),
+        commands=CommandsConfig(test=command, lint=lint, format=format),
         limits=LimitsConfig(max_attempts=max_attempts),
         git=GitConfig(remote=remote),
     )
@@ -638,3 +641,126 @@ def test_pull_failure_blocks_story(tmp_path: Path) -> None:
     story = run(env)
     assert story.status == StoryStatus.BLOCKED
     assert story.blocked_reason is not None and story.blocked_reason.startswith("Pull failed:")
+
+
+def log_records(root: Path) -> list[dict[str, object]]:
+    (log_file,) = (root / ".agent" / "runs" / "S-0001").glob("*.jsonl")
+    return [json.loads(line) for line in log_file.read_text().splitlines()]
+
+
+def show(root: Path, rev: str, name: str) -> str:
+    return subprocess.run(
+        ["git", "show", f"{rev}:{name}"], cwd=root, capture_output=True, text=True, check=True
+    ).stdout
+
+
+def test_formatter_runs_before_each_agent_commit(tmp_path: Path) -> None:
+    fmt = write_formatter(tmp_path)
+    env = make_env(tmp_path, format=fmt)
+    env.runtime.script(Role.TEST_WRITER, tw({"tests/check.py": CHECK + "# UGLY\n"}))
+    env.runtime.script(Role.IMPLEMENTER, impl({"impl.py": IMPL_GOOD + "# UGLY\n"}))
+    env.runtime.script(Role.REVIEWER, approve())
+    env.runtime.script(Role.QA, qa_ok())
+    story = run(env)
+    assert story.status == StoryStatus.DONE
+    assert show(env.root, "HEAD~1", "tests/check.py") == CHECK + "# PRETTY\n"
+    assert show(env.root, "HEAD", "impl.py") == IMPL_GOOD + "# PRETTY\n"
+    formats = [r for r in log_records(env.root) if r["event"] == "format"]
+    assert len(formats) == 2
+    assert all(r["ok"] is True for r in formats)
+
+
+def test_red_restores_non_test_files_changed_only_by_formatter(tmp_path: Path) -> None:
+    fmt = write_formatter(tmp_path)
+    env = make_env(tmp_path, format=fmt, files={"legacy.py": "x = 1  # UGLY\n"})
+    env.runtime.script(Role.TEST_WRITER, tw())
+    env.runtime.script(Role.IMPLEMENTER, impl())
+    env.runtime.script(Role.REVIEWER, approve())
+    env.runtime.script(Role.QA, qa_ok())
+    story = run(env)
+    assert story.status == StoryStatus.DONE
+    assert len(env.runtime.requests_for(Role.TEST_WRITER)) == 1
+    assert env.repo.changed_files("HEAD~1") == ["tests/check.py"]
+
+
+TEST_LINT = "grep -Hn LINTBAD tests/check.py && exit 1 || exit 0"
+BAD_LINT_TESTS = CHECK + "# LINTBAD\n"
+
+
+def fix_tests(files: dict[str, str]) -> Step:
+    return Step(TestWriterOutput(summary="fixed", test_files=["tests/check.py"]), writer(files))
+
+
+def test_lint_failure_only_in_test_file_gets_test_writer_fix_turn(tmp_path: Path) -> None:
+    env = make_env(tmp_path, lint=TEST_LINT)
+    env.runtime.script(
+        Role.TEST_WRITER,
+        tw({"tests/check.py": BAD_LINT_TESTS}),
+        fix_tests({"tests/check.py": CHECK}),
+    )
+    env.runtime.script(Role.IMPLEMENTER, impl())
+    env.runtime.script(Role.REVIEWER, approve())
+    env.runtime.script(Role.QA, qa_ok())
+    story = run(env)
+    assert story.status == StoryStatus.DONE
+    assert len(env.runtime.requests_for(Role.IMPLEMENTER)) == 1
+    fix_request = env.runtime.requests_for(Role.TEST_WRITER)[1]
+    assert "tests/check.py:" in fix_request.prompt
+    assert "only test files" in fix_request.prompt
+    assert subjects(env.root) == [
+        "test(T1): fix test lint",
+        "feat(T1): Say two",
+        "test(T1): Say two",
+    ]
+    events = [r["event"] for r in log_records(env.root)]
+    assert "test_fix" in events
+
+
+def test_test_fix_turn_touching_non_test_file_is_reset(tmp_path: Path) -> None:
+    env = make_env(tmp_path, lint=TEST_LINT)
+    env.runtime.script(
+        Role.TEST_WRITER,
+        tw({"tests/check.py": BAD_LINT_TESTS}),
+        fix_tests({"tests/check.py": CHECK, "impl.py": IMPL_GOOD + "# touched\n"}),
+        fix_tests({"tests/check.py": CHECK}),
+    )
+    env.runtime.script(Role.IMPLEMENTER, impl())
+    env.runtime.script(Role.REVIEWER, approve())
+    env.runtime.script(Role.QA, qa_ok())
+    story = run(env)
+    assert story.status == StoryStatus.DONE
+    third = env.runtime.requests_for(Role.TEST_WRITER)[2]
+    assert "only touch test files" in third.prompt and "impl.py" in third.prompt
+    assert "touched" not in (env.root / "impl.py").read_text()
+    assert subjects(env.root)[0] == "test(T1): fix test lint"
+
+
+def test_resume_restarts_pending_task_from_scratch(tmp_path: Path) -> None:
+    tasks = [Task("T1", "First", TaskStatus.DONE), Task("T2", "Second")]
+    env = make_env(tmp_path, status=StoryStatus.IN_PROGRESS, tasks=tasks)
+    env.repo.create_branch("story/S-0001", "main")
+    writer({"tests/old_t1.py": "pass\n"})(env.root)
+    env.repo.commit_all("test(T1): First")
+    writer({"notes_t1.txt": "t1"})(env.root)
+    kept = env.repo.commit_all("feat(T1): First")
+    writer({"tests/old_t2.py": "pass\n"})(env.root)
+    env.repo.commit_all("test(T2): Second")
+    writer({"notes_t2.txt": "t2"})(env.root)
+    env.repo.commit_all("feat(T2): Second")
+    env.runtime.script(Role.TEST_WRITER, tw())
+    env.runtime.script(Role.IMPLEMENTER, impl())
+    env.runtime.script(Role.REVIEWER, approve())
+    env.runtime.script(Role.QA, qa_ok())
+    story = run(env)
+    assert story.status == StoryStatus.DONE
+    assert subjects(env.root) == [
+        "feat(T2): Second",
+        "test(T2): Second",
+        "feat(T1): First",
+        "test(T1): First",
+    ]
+    assert not (env.root / "notes_t2.txt").exists()
+    assert not (env.root / "tests" / "old_t2.py").exists()
+    assert (env.root / "notes_t1.txt").exists()
+    (restart,) = [r for r in log_records(env.root) if r["event"] == "task_restarted"]
+    assert restart["task"] == "T2" and restart["detail"] == kept

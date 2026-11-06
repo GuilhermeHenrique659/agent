@@ -21,6 +21,7 @@ from autodev.pipeline.prompts import (
     build_qa_prompt,
     build_review_fix_prompt,
     build_reviewer_prompt,
+    build_test_fix_prompt,
     build_test_writer_prompt,
     load_instructions,
 )
@@ -219,3 +220,19 @@ def test_bootstrap_prompt_requires_running_commands_as_written() -> None:
     assert "exactly as written" in text
     assert "lockfile" in text
     assert "network or sandbox" in text
+
+
+def test_brief_prompt_asks_for_format_command() -> None:
+    text = build_brief_prompt([], empty=True)
+    assert "format" in text and "auto-format" in text
+    assert "self-contained" in text
+
+
+def test_test_fix_prompt_limits_to_test_files() -> None:
+    text = build_test_fix_prompt(
+        make_story(), Task("T1", "Say two"), "main", [], "Gate lint failed:\nE501 in tests/a.py"
+    )
+    assert "Task T1: Say two" in text
+    assert "E501 in tests/a.py" in text
+    assert "only test files" in text
+    assert "do not change what the tests assert" in text.lower()

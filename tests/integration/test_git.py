@@ -246,3 +246,28 @@ def test_commit_paths_on_unborn_repo(tmp_path: Path) -> None:
     assert repo.commit_paths([".agent", "CLAUDE.md"], "chore: first") is not None
     assert repo.tracked_files() == [".agent/a.txt"]
     assert repo.commit_paths([".agent"], "again") is None
+
+
+def test_changed_paths_and_restore(repo: GitRepo) -> None:
+    write_commit(repo, "a.txt", "a\n", "add a")
+    assert repo.changed_paths() == []
+    (repo.path / "a.txt").write_text("changed\n")
+    (repo.path / "b.txt").write_text("new\n")
+    (repo.path / "dir").mkdir()
+    (repo.path / "dir" / "c.txt").write_text("c\n")
+    (repo.path / "README.md").unlink()
+    assert repo.changed_paths() == ["README.md", "a.txt", "b.txt", "dir/c.txt"]
+    repo.restore(["a.txt", "b.txt", "README.md"])
+    assert (repo.path / "a.txt").read_text() == "a\n"
+    assert (repo.path / "README.md").read_text() == "hello\n"
+    assert not (repo.path / "b.txt").exists()
+    assert repo.changed_paths() == ["dir/c.txt"]
+    repo.restore([])
+
+
+def test_commits_since(repo: GitRepo) -> None:
+    base = repo.head()
+    assert repo.commits_since(base) == []
+    first = write_commit(repo, "a.txt", "a\n", "test(T1): first")
+    second = write_commit(repo, "b.txt", "b\n", "feat(T1): second")
+    assert repo.commits_since(base) == [(first, "test(T1): first"), (second, "feat(T1): second")]

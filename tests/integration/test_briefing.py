@@ -24,7 +24,7 @@ from autodev.pipeline.outputs import (
 )
 from autodev.pipeline.run_log import RunLog
 from autodev.pipeline.story_runner import RunError
-from tests.fakes import FakeAgentRuntime, FakeIO, Step, agent_error
+from tests.fakes import FakeAgentRuntime, FakeIO, Step, agent_error, write_formatter
 from tests.integration.conftest import git
 
 PY = shlex.quote(sys.executable)
@@ -66,11 +66,13 @@ FLAG_SCRIPT = (
 FLAG_CMD = f"{PY} -B -c {shlex.quote(FLAG_SCRIPT)}"
 
 
-def brief(test: str | None = TEST_CMD, title: str = "Use Python") -> TechBrief:
+def brief(
+    test: str | None = TEST_CMD, title: str = "Use Python", format: str | None = None
+) -> TechBrief:
     return TechBrief(
         summary="A Python CLI",
         adrs=[AdrDraft(title=title, context="c", decision="Python 3.12", consequences="q")],
-        commands=Commands(build=None, test=test, lint=None),
+        commands=Commands(build=None, test=test, lint=None, format=format),
         standards=["Type everything"],
     )
 
@@ -279,3 +281,22 @@ def test_stack_md_references_existing_project_conventions(tmp_path: Path) -> Non
     assert stack.endswith("Project conventions also live in: .claude/rules/style.md, CLAUDE.md.\n")
     first = env.runtime.messages_for(Role.ARCHITECT)[0]
     assert "CLAUDE.md" in first and "not restate" in first
+
+
+def test_bootstrap_runs_formatter_before_commit(tmp_path: Path) -> None:
+    env = make_env(tmp_path)
+    fmt = write_formatter(tmp_path)
+    env.runtime.script(Role.ARCHITECT, brief_turn(brief(format=fmt)))
+
+    def ugly_smoke(workdir: Path) -> None:
+        (workdir / "smoke.py").write_text("import sys\nsys.exit(0)  # UGLY\n")
+
+    env.runtime.script(Role.IMPLEMENTER, Step(BootstrapOutput(summary="skeleton"), ugly_smoke))
+    run(env, FakeIO("a"))
+    assert load_config(env.root).commands.format == fmt
+    shown = subprocess.run(
+        ["git", "show", "HEAD:smoke.py"], cwd=env.root, capture_output=True, text=True, check=True
+    ).stdout
+    assert shown == "import sys\nsys.exit(0)  # PRETTY\n"
+    log = next((env.root / ".agent" / "runs" / "brief").glob("*.jsonl")).read_text()
+    assert '"event": "format"' in log

@@ -7,7 +7,8 @@ from autodev.adapters.git import GitError, GitRepo
 from autodev.config.models import ProjectConfig
 from autodev.domain.role import Role
 from autodev.domain.story import Story, StoryStatus, Task, TaskStatus
-from autodev.gates.runner import GateReport, GateResult, run_gates
+from autodev.gates.failure_files import gate_failure_files
+from autodev.gates.runner import GateReport, GateResult, run_command, run_gates
 from autodev.gates.tdd import TddGuard, is_test_file
 from autodev.pipeline import prompts
 from autodev.pipeline.merge import MergeFailed, Merger
@@ -32,6 +33,7 @@ _RESUMABLE = (
 _STATE_DIRS = (".agent/backlog/", ".agent/runs/")
 _LOG_DETAIL_CHARS = 2000
 _TITLE_CHARS = 60
+_RESTART_KINDS = ("test", "feat", "fix")
 
 
 class RunError(Exception):
@@ -117,6 +119,7 @@ class StoryRunner:
         try:
             for task in story.tasks:
                 if task.status == TaskStatus.PENDING:
+                    self._restart_task(task)
                     await self._red(story, task)
                     await self._green(story, task)
                     task.complete()
@@ -124,6 +127,43 @@ class StoryRunner:
             await self._quality_loop(story)
         except _Failed as failure:
             self._block(story, str(failure))
+
+    def _restart_task(self, task: Task) -> None:
+        """Drop the commits of an earlier, unfinished attempt at `task` so it restarts."""
+        prefixes = tuple(f"{kind}({task.id}):" for kind in _RESTART_KINDS)
+        for sha, subject in self._repo.commits_since(self._config.git.main_branch):
+            if subject.startswith(prefixes):
+                parent = self._repo.rev_parse(f"{sha}^")
+                self._repo.reset_hard(parent)
+                self._log.append("task_restarted", task=task.id, detail=parent)
+                return
+
+    def _format(self, task: Task | None, *, protect_non_tests: bool = False) -> None:
+        """Run the configured formatter on the working tree before an agent commit.
+
+        With `protect_non_tests`, non-test files the formatter changed on its own
+        (the agent had not touched them) are restored, so it cannot break the test-only rules.
+        """
+        command = self._config.commands.format
+        if command is None:
+            return
+        touched_before = set(self._repo.changed_paths())
+        code, output = run_command(command, self._root, self._config.limits.command_timeout_s)
+        self._log.append(
+            "format",
+            task=task.id if task else None,
+            ok=code == 0,
+            detail=output[-_LOG_DETAIL_CHARS:],
+        )
+        if protect_non_tests:
+            globs = self._config.tdd.test_globs
+            by_formatter = [
+                p
+                for p in self._repo.changed_paths()
+                if p not in touched_before and not is_test_file(p, globs)
+            ]
+            if by_formatter:
+                self._repo.restore(by_formatter)
 
     # -- agent calls -------------------------------------------------------
 
@@ -178,6 +218,8 @@ class StoryRunner:
                 feedback = out
                 self._repo.reset_hard(before)
                 continue
+            if self._repo.has_changes():
+                self._format(task, protect_non_tests=True)
             if not self._repo.has_changes():
                 feedback = "The test writer made no changes; tests must be written."
                 continue
@@ -200,8 +242,18 @@ class StoryRunner:
                 story, task, base, self._context_paths(), feedback
             )
 
+        def build_test_fix(gate_output: str | None) -> str:
+            return prompts.build_test_fix_prompt(
+                story, task, base, self._context_paths(), gate_output
+            )
+
         await self._implement(
-            task, build, f"({task.id}): {task.title}", first_prefix="feat", tdd=True
+            task,
+            build,
+            f"({task.id}): {task.title}",
+            first_prefix="feat",
+            tdd=True,
+            build_test_fix=build_test_fix,
         )
 
     async def _implement(
@@ -213,25 +265,39 @@ class StoryRunner:
         first_prefix: str,
         tdd: bool,
         label: str = "review",
+        build_test_fix: Callable[[str | None], str] | None = None,
     ) -> None:
         """Run the implementer until the checks pass or the attempt budget is spent.
 
         Commits that fail only because tests/gates fail are kept (the next attempt fixes on top);
         commits that break the TDD rules, and agent errors, are reset.
+        With `build_test_fix`, a gate failure that points only at test files makes the next
+        attempt a test writer turn that fixes those files (the implementer may not touch them).
         """
         feedback: str | None = None
         committed = False
+        test_fix_next = False
         globs = self._config.tdd.test_globs
         what = task.id if task else label
         for _ in range(self._config.limits.max_attempts):
             before = self._repo.head()
-            out = await self._agent(
-                Role.IMPLEMENTER, build_prompt(feedback), ImplementerOutput, task
-            )
+            test_fix = test_fix_next and task is not None and build_test_fix is not None
+            test_fix_next = False
+            if test_fix and task is not None and build_test_fix is not None:
+                out: ImplementerOutput | TestWriterOutput | str = await self._agent(
+                    Role.TEST_WRITER, build_test_fix(feedback), TestWriterOutput, task
+                )
+            else:
+                out = await self._agent(
+                    Role.IMPLEMENTER, build_prompt(feedback), ImplementerOutput, task
+                )
             if isinstance(out, str):
                 feedback = out
                 self._repo.reset_hard(before)
+                test_fix_next = test_fix
                 continue
+            if self._repo.has_changes():
+                self._format(task, protect_non_tests=test_fix)
             no_change = not self._repo.has_changes()
             if no_change and not committed:
                 feedback = "The implementer made no changes."
@@ -247,28 +313,66 @@ class StoryRunner:
                     "You made no changes, but the gates still fail:\n"
                     + prompts.gate_feedback(report)
                 )
+                test_fix_next = tdd and self._only_test_files_failed(report)
                 continue
-            prefix = "fix" if committed else first_prefix
-            sha = self._repo.commit_all(f"{prefix}{message}")
-            if tdd:
-                green = self._guard.check_green(sha)
-                self._log_check("tdd_green", task, green)
-                if not green.ok:
-                    touched = [f for f in self._repo.changed_files(sha) if is_test_file(f, globs)]
-                    if touched:
-                        self._repo.reset_hard(before)
-                        feedback = f"Green check failed:\n{green.output}"
-                    else:
-                        committed = True
-                        feedback = f"Tests failed after your change:\n{green.output}"
+            if test_fix and task is not None:
+                others = [p for p in self._repo.changed_paths() if not is_test_file(p, globs)]
+                if others:
+                    self._repo.reset_hard(before)
+                    listed = "\n".join(others)
+                    feedback = (
+                        f"A test fix may only touch test files; non-test files changed:\n{listed}"
+                    )
+                    self._log.append("test_fix", task=task.id, ok=False, detail=feedback)
+                    test_fix_next = True
                     continue
+                self._repo.commit_all(f"test({task.id}): fix test lint")
+                tested = self._run_tests()
+                self._log.append(
+                    "test_fix",
+                    task=task.id,
+                    ok=tested.ok,
+                    detail=tested.output[-_LOG_DETAIL_CHARS:],
+                )
+                if not tested.ok:
+                    feedback = f"Tests failed after your change:\n{tested.output}"
+                    continue
+            else:
+                prefix = "fix" if committed else first_prefix
+                sha = self._repo.commit_all(f"{prefix}{message}")
+                if tdd:
+                    green = self._guard.check_green(sha)
+                    self._log_check("tdd_green", task, green)
+                    if not green.ok:
+                        touched = [
+                            f for f in self._repo.changed_files(sha) if is_test_file(f, globs)
+                        ]
+                        if touched:
+                            self._repo.reset_hard(before)
+                            feedback = f"Green check failed:\n{green.output}"
+                        else:
+                            committed = True
+                            feedback = f"Tests failed after your change:\n{green.output}"
+                        continue
             committed = True
             report = run_gates(self._config, self._root)
             self._log_report(task, report)
             if report.ok:
                 return
             feedback = prompts.gate_feedback(report)
+            test_fix_next = tdd and self._only_test_files_failed(report)
         raise _Failed(f"{what}: implementation failed. {feedback}")
+
+    def _only_test_files_failed(self, report: GateReport) -> bool:
+        tests, others = gate_failure_files(report, self._root, self._config.tdd.test_globs)
+        return bool(tests) and not others
+
+    def _run_tests(self) -> GateResult:
+        command = self._config.commands.test
+        if command is None:
+            return GateResult("test", True, "No command configured", skipped=True)
+        code, output = run_command(command, self._root, self._config.limits.command_timeout_s)
+        return GateResult("test", code == 0, output)
 
     def _log_report(self, task: Task | None, report: GateReport) -> None:
         detail = "\n".join(

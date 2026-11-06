@@ -7,13 +7,17 @@ from autodev.pipeline.outputs import Commands
 
 type Value = str | int | float | list[str] | None
 
-_KEYS = ("build", "test", "lint")
+_KEYS = ("build", "test", "lint", "format")
 _STEP = "  "
 
 
 def set_commands(project_root: Path, commands: Commands) -> None:
-    """Rewrite build/test/lint in the `commands:` block of .agent/config.yaml, line by line."""
-    _edit(project_root, [(f"commands.{key}", getattr(commands, key)) for key in _KEYS])
+    """Rewrite the `commands:` block of .agent/config.yaml (build/test/lint/format)."""
+    text = (project_root / ".agent" / "config.yaml").read_text()
+    has_format = re.search(r"^\s+format:", text, re.MULTILINE) is not None
+    # an absent optional `format` stays absent unless the brief proposes one
+    keys = [k for k in _KEYS if k != "format" or has_format or commands.format is not None]
+    _edit(project_root, [(f"commands.{key}", getattr(commands, key)) for key in keys])
 
 
 def set_value(project_root: Path, key: str, value: Value) -> None:

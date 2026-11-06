@@ -1,3 +1,5 @@
+import shlex
+import sys
 from collections import defaultdict, deque
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -95,3 +97,21 @@ class FakeAgentRuntime:
 
 def agent_error(message: str = "boom") -> AgentError:
     return AgentError(message)
+
+
+_FORMATTER = (
+    "import pathlib\n"
+    "for p in pathlib.Path('.').rglob('*.py'):\n"
+    "    if '.git' in p.parts or '.agent' in p.parts:\n"
+    "        continue\n"
+    "    text = p.read_text()\n"
+    "    if '# UGLY' in text:\n"
+    "        p.write_text(text.replace('# UGLY', '# PRETTY'))\n"
+)
+
+
+def write_formatter(directory: Path) -> str:
+    """A tiny formatter (rewrites the marker `# UGLY` to `# PRETTY` in .py files); its command."""
+    script = directory / "fmt.py"
+    script.write_text(_FORMATTER)
+    return f"{shlex.quote(sys.executable)} -B {shlex.quote(str(script))}"

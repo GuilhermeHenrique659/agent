@@ -5,6 +5,9 @@ commands:
   build: null  # e.g. "npm run build"; compiles/builds the project
   test: null   # e.g. "pytest"; runs the test suite
   lint: null   # e.g. "ruff check ."; runs linters/type checks
+  # optional; run by autodev before every agent commit to auto-format/auto-fix,
+  # e.g. "uv run ruff format . && uv run ruff check --fix ."
+  format: null
 
 git:
   main_branch: main

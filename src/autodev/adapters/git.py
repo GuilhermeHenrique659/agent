@@ -77,11 +77,45 @@ class GitRepo:
     def head(self) -> str:
         return self._run("rev-parse", "HEAD").stdout.strip()
 
+    def rev_parse(self, ref: str) -> str:
+        return self._run("rev-parse", ref).stdout.strip()
+
     def changed_files(self, commit: str) -> list[str]:
         out = self._run(
             "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "-z", commit
         ).stdout
         return sorted(f for f in out.split("\0") if f)
+
+    def changed_paths(self) -> list[str]:
+        """Repo-relative paths modified, added, deleted or untracked in the working tree."""
+        out = self._run("status", "--porcelain", "-z", "--untracked-files=all").stdout
+        entries = out.split("\0")
+        paths: set[str] = set()
+        i = 0
+        while i < len(entries):
+            entry = entries[i]
+            i += 1
+            if len(entry) < 4:
+                continue
+            paths.add(entry[3:])
+            if entry[0] in "RC":  # renames/copies carry the origin as a separate entry
+                i += 1
+        return sorted(paths)
+
+    def restore(self, paths: list[str]) -> None:
+        """Bring `paths` back to HEAD: tracked files are checked out, untracked ones deleted."""
+        for path in paths:
+            tracked = self._run("ls-files", "--error-unmatch", "--", path, check=False)
+            if tracked.returncode == 0:
+                self._run("checkout", "HEAD", "--", path)
+            else:
+                (self.path / path).unlink(missing_ok=True)
+
+    def commits_since(self, base: str) -> list[tuple[str, str]]:
+        """(sha, subject) of the commits in base..HEAD, oldest first."""
+        out = self._run("log", "--reverse", "--format=%H%x00%s", f"{base}..HEAD").stdout
+        pairs = (line.split("\0", 1) for line in out.splitlines() if line)
+        return [(sha, subject) for sha, subject in pairs]
 
     def is_ignored(self, path: str) -> bool:
         proc = self._run("check-ignore", "-q", path, check=False)

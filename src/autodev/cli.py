@@ -17,7 +17,9 @@ from autodev.config import ConfigError, load_config
 from autodev.config.models import ProjectConfig
 from autodev.domain.story import InvalidTransition, Story, StoryStatus
 from autodev.gates.runner import run_gates
+from autodev.pipeline.adr import adr_dir, has_decisions
 from autodev.pipeline.approval import approve_story
+from autodev.pipeline.briefing import is_empty_repo, run_brief
 from autodev.pipeline.refinement import refine_story
 from autodev.pipeline.request_flow import discover_and_refine, handle_request
 from autodev.pipeline.run_log import RunLog
@@ -107,6 +109,43 @@ def make_io() -> UserIO:
     return ConsoleIO()
 
 
+def _run_brief(
+    config: ProjectConfig, path: Path, runtime: AgentRuntime, io: UserIO
+) -> ProjectConfig:
+    """Run the technical briefing, print what it wrote and return the reloaded config."""
+    repo = GitRepo(path)
+    was_empty = is_empty_repo(repo)
+    before = {p.name for p in adr_dir(path).glob("*.md")}
+    brief = asyncio.run(
+        run_brief(
+            config=config,
+            project_root=path,
+            runtime=runtime,
+            repo=repo,
+            context=KnowledgeFolder(path),
+            io=io,
+            log=RunLog(path, "brief"),
+        )
+    )
+    for adr in sorted(p for p in adr_dir(path).glob("*.md") if p.name not in before):
+        console.print(f"ADR: {adr.relative_to(path)}", markup=False)
+    for name in ("build", "test", "lint"):
+        console.print(f"{name}: {getattr(brief.commands, name)}", markup=False)
+    console.print(f"Bootstrap: {'ran' if was_empty else 'skipped'}")
+    return load_config(path)
+
+
+def _offer_brief(
+    config: ProjectConfig, path: Path, runtime: AgentRuntime, io: UserIO
+) -> ProjectConfig:
+    if has_decisions(path):
+        return config
+    answer = io.ask("No technical decisions recorded yet. Run the technical briefing first? [Y/n]")
+    if answer.strip().lower() in ("", "y", "yes"):
+        return _run_brief(config, path, runtime, io)
+    return config
+
+
 def _run_story(config: ProjectConfig, path: Path, runtime: AgentRuntime, story_id: str) -> Story:
     runner = StoryRunner(
         config,
@@ -124,6 +163,17 @@ def _print_final_status(story: Story) -> None:
     console.print(f"{story.id}: {story.status.value}")
     if story.blocked_reason:
         console.print(f"Blocked: {story.blocked_reason}", markup=False)
+
+
+@app.command()
+def brief(path: PathOpt = Path()) -> None:
+    """Technical briefing: define stack and architecture, write ADRs, bootstrap an empty repo."""
+    try:
+        config = load_config(path)
+        _run_brief(config, path, make_runtime(config, path), make_io())
+    except (ConfigError, RunError) as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
 
 
 @app.command()
@@ -170,6 +220,7 @@ def request(
         io = make_io()
         if not text or not text.strip():
             text = io.ask("Describe your request")
+        config = _offer_brief(config, path, runtime, io)
         store = StoryStore(path)
         story = asyncio.run(
             handle_request(
@@ -205,6 +256,7 @@ def discover(story_id: str, path: PathOpt = Path()) -> None:
             )
         runtime = make_runtime(config, path)
         io = make_io()
+        config = _offer_brief(config, path, runtime, io)
         asyncio.run(
             discover_and_refine(
                 story,

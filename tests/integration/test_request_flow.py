@@ -8,6 +8,8 @@ from autodev.config.models import ProjectConfig
 from autodev.domain.role import Role
 from autodev.domain.story import Story, StoryStatus
 from autodev.pipeline.outputs import (
+    AdrDraft,
+    ArchitectureReview,
     DiscoveryResult,
     DiscoveryTurn,
     EventStorming,
@@ -31,7 +33,7 @@ def make_root(tmp_path: Path) -> Path:
     return root
 
 
-def request(root: Path, runtime: FakeAgentRuntime, text: str) -> Story:
+def request(root: Path, runtime: FakeAgentRuntime, text: str, io: FakeIO | None = None) -> Story:
     return asyncio.run(
         handle_request(
             text,
@@ -40,7 +42,7 @@ def request(root: Path, runtime: FakeAgentRuntime, text: str) -> Story:
             runtime=runtime,
             store=StoryStore(root),
             context=KnowledgeFolder(root),
-            io=FakeIO(),
+            io=io or FakeIO(),
             log_factory=lambda sid: RunLog(root, sid),
         )
     )
@@ -91,3 +93,58 @@ def test_discovery_failure_leaves_story_saved_as_draft(tmp_path: Path) -> None:
     assert saved.status == StoryStatus.DRAFT
     assert saved.title == "Pay with card"
     assert saved.description == "Pay with card"
+
+
+def refined_step() -> Step:
+    return Step(
+        RefinementOutput(
+            title="Checkout flow",
+            user_story="As a customer, I want to pay",
+            acceptance_criteria=["Given a cart When I pay Then an order exists"],
+            tasks=[RefinedTask(title="Place order")],
+        )
+    )
+
+
+def test_architecture_review_runs_when_flagged_and_section_reaches_refiner(
+    tmp_path: Path,
+) -> None:
+    root = make_root(tmp_path)
+    result = DiscoveryResult(
+        title="Checkout",
+        problem="Customers cannot pay",
+        needs_architecture_review=True,
+        architecture_notes="gateway",
+    )
+    runtime = FakeAgentRuntime()
+    runtime.script(Role.DISCOVERY, Step(DiscoveryTurn(message="ok", done=True, result=result)))
+    runtime.script(
+        Role.ARCHITECT,
+        Step(
+            ArchitectureReview(
+                summary="s",
+                adrs=[AdrDraft(title="Use gateway", context="c", decision="d", consequences="q")],
+                components=["PaymentGateway"],
+            )
+        ),
+    )
+    runtime.script(Role.REFINER, refined_step())
+    story = request(root, runtime, "Pay with card", FakeIO("a"))
+    adr = ".agent/architecture/adr/0001-use-gateway.md"
+    assert (root / adr).is_file()
+    refiner_prompt = runtime.requests_for(Role.REFINER)[0].prompt
+    assert "## Architecture decisions" in refiner_prompt
+    assert f"{adr}: Use gateway" in refiner_prompt
+    assert "- PaymentGateway" in refiner_prompt
+    assert "## Architecture decisions" in story.description
+
+
+def test_architecture_review_skipped_when_not_flagged(tmp_path: Path) -> None:
+    root = make_root(tmp_path)
+    result = DiscoveryResult(title="Checkout", problem="Customers cannot pay")
+    runtime = FakeAgentRuntime()
+    runtime.script(Role.DISCOVERY, Step(DiscoveryTurn(message="ok", done=True, result=result)))
+    runtime.script(Role.REFINER, refined_step())
+    story = request(root, runtime, "Pay with card")
+    assert runtime.requests_for(Role.ARCHITECT) == []
+    assert "Architecture decisions" not in story.description

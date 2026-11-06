@@ -12,6 +12,8 @@ from autodev.cli import app
 from autodev.domain.role import Role
 from autodev.domain.story import Story, StoryStatus, Task
 from autodev.pipeline.outputs import (
+    AdrDraft,
+    Commands,
     DiscoveryResult,
     DiscoveryTurn,
     GlossaryEntry,
@@ -20,6 +22,8 @@ from autodev.pipeline.outputs import (
     RefinedTask,
     RefinementOutput,
     ReviewOutput,
+    TechBrief,
+    TechBriefTurn,
     TestWriterOutput,
 )
 from autodev.pipeline.state_store import StoryStore
@@ -212,8 +216,12 @@ def discovery_done() -> Step:
     return Step(DiscoveryTurn(message="Clear enough", done=True, result=result))
 
 
-def setup_git_project(root: Path) -> None:
+def setup_git_project(root: Path, adr: bool = True, code: bool = False) -> None:
     runner.invoke(app, ["init", str(root)])
+    if adr:
+        (root / ".agent" / "architecture" / "adr" / "0001-existing.md").write_text("# ADR 0001\n")
+    if code:
+        (root / "app.py").write_text("print('hi')\n")
     repo = GitRepo(root)
     repo.init("main")
     git(root, "config", "user.name", "Test")
@@ -362,3 +370,101 @@ def test_discover_rejects_non_draft_story(tmp_path: Path, monkeypatch: pytest.Mo
     assert fake.requests == []
     missing = runner.invoke(app, ["discover", "S-9999", "--path", str(tmp_path)])
     assert missing.exit_code == 1
+
+
+def brief_step() -> Step:
+    brief = TechBrief(
+        summary="A Python CLI",
+        adrs=[AdrDraft(title="Use Python", context="c", decision="Python 3.12", consequences="q")],
+        commands=Commands(test="exit 0"),
+    )
+    return Step(TechBriefTurn(message="Proposal", done=True, result=brief))
+
+
+def test_brief_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    setup_git_project(tmp_path, adr=False, code=True)
+    fake = FakeAgentRuntime()
+    fake.script(Role.ARCHITECT, brief_step())
+    io = FakeIO("a")
+    patch_factories(monkeypatch, fake, io)
+    result = runner.invoke(app, ["brief", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "0001-use-python.md" in result.output
+    assert "exit 0" in result.output
+    assert "Bootstrap: skipped" in result.output
+    assert (tmp_path / ".agent/architecture/adr/0001-use-python.md").is_file()
+    log = subprocess.run(
+        ["git", "log", "-1", "--format=%s"], cwd=tmp_path, capture_output=True, text=True
+    ).stdout.strip()
+    assert log == "docs: technical briefing"
+
+
+def test_brief_command_error_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    setup_git_project(tmp_path)
+    (tmp_path / "dirty.txt").write_text("x")
+    patch_factories(monkeypatch, FakeAgentRuntime(), FakeIO())
+    result = runner.invoke(app, ["brief", "--path", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "uncommitted" in result.output
+
+
+def test_request_offers_brief_when_no_adr_and_runs_it_on_yes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup_git_project(tmp_path, adr=False, code=True)
+    fake = FakeAgentRuntime()
+    fake.script(Role.ARCHITECT, brief_step())
+    fake.script(Role.DISCOVERY, discovery_done())
+    fake.script(Role.REFINER, Step(refined_output()))
+    io = FakeIO("", "a", "l")
+    patch_factories(monkeypatch, fake, io)
+    result = runner.invoke(app, ["request", "Pay with card", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert io.prompts[0].startswith("No technical decisions recorded yet.")
+    assert io.prompts[1:] == ["[a]ccept, [f]eedback", "[a]pprove, [f]eedback, [l]ater"]
+    assert (tmp_path / ".agent/architecture/adr/0001-use-python.md").is_file()
+    assert StoryStore(tmp_path).get("S-0001").status == StoryStatus.REFINED
+
+
+def test_discover_offers_brief_and_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup_git_project(tmp_path, adr=False, code=True)
+    StoryStore(tmp_path).save(Story("S-0001", "Add logging", description="Add logging"))
+    fake = FakeAgentRuntime()
+    fake.script(Role.ARCHITECT, brief_step())
+    fake.script(Role.DISCOVERY, discovery_done())
+    fake.script(Role.REFINER, Step(refined_output()))
+    io = FakeIO("YES", "a", "l")
+    patch_factories(monkeypatch, fake, io)
+    result = runner.invoke(app, ["discover", "S-0001", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert len(fake.requests_for(Role.ARCHITECT)) == 1
+    assert StoryStore(tmp_path).get("S-0001").status == StoryStatus.REFINED
+
+
+def test_request_skips_brief_on_no(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    setup_git_project(tmp_path, adr=False)
+    fake = FakeAgentRuntime()
+    fake.script(Role.DISCOVERY, discovery_done())
+    fake.script(Role.REFINER, Step(refined_output()))
+    io = FakeIO("n", "l")
+    patch_factories(monkeypatch, fake, io)
+    result = runner.invoke(app, ["request", "Pay with card", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert fake.requests_for(Role.ARCHITECT) == []
+    assert io.prompts[0].startswith("No technical decisions recorded yet.")
+
+
+def test_request_does_not_offer_brief_when_adr_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup_git_project(tmp_path)
+    fake = FakeAgentRuntime()
+    fake.script(Role.DISCOVERY, discovery_done())
+    fake.script(Role.REFINER, Step(refined_output()))
+    io = FakeIO("l")
+    patch_factories(monkeypatch, fake, io)
+    result = runner.invoke(app, ["request", "Pay with card", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert io.prompts == ["[a]pprove, [f]eedback, [l]ater"]

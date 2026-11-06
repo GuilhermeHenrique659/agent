@@ -3,6 +3,7 @@ from pathlib import Path
 
 from autodev.config.models import ProjectConfig
 from autodev.domain.story import Story
+from autodev.pipeline.architecture import review_architecture
 from autodev.pipeline.discovery import run_discovery
 from autodev.pipeline.domain_docs import append_event_storming, merge_glossary
 from autodev.pipeline.refinement import refine_story
@@ -53,7 +54,8 @@ async def discover_and_refine(
     io: UserIO,
     log: RunLog,
 ) -> Story:
-    """Discovery (the story description is the request) -> domain docs -> refinement."""
+    """Discovery (the story description is the request) -> domain docs -> architecture review
+    (when flagged) -> refinement."""
     text = story.description
     result = await run_discovery(
         story,
@@ -67,7 +69,20 @@ async def discover_and_refine(
     domain = project_root / ".agent" / "domain"
     merge_glossary(domain / "glossary.md", result.glossary)
     append_event_storming(domain / "events.md", story.id, result.title, result.event_storming)
-    story.record_discovery(result.title, render_discovery(text, result))
+    description = render_discovery(text, result)
+    if result.needs_architecture_review:
+        section = await review_architecture(
+            story,
+            result,
+            config=config,
+            project_root=project_root,
+            runtime=runtime,
+            context=context,
+            io=io,
+            log=log,
+        )
+        description += "\n" + section
+    story.record_discovery(result.title, description)
     store.save(story)
     await refine_story(
         story,

@@ -200,3 +200,11 @@ def test_rebase_in_progress(repo: GitRepo) -> None:
     assert repo.rebase_in_progress()
     repo.rebase_abort()
     assert not repo.rebase_in_progress()
+
+
+def test_tracked_files(repo: GitRepo) -> None:
+    (repo.path / "src").mkdir()
+    (repo.path / "src" / "a b.py").write_text("x")
+    repo.commit_all("more")
+    (repo.path / "untracked.txt").write_text("x")
+    assert repo.tracked_files() == ["README.md", "src/a b.py"]

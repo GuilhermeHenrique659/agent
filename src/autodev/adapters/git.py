@@ -88,6 +88,10 @@ class GitRepo:
             return False
         raise GitError(f"git check-ignore {path} failed: {proc.stderr.strip()}")
 
+    def tracked_files(self) -> list[str]:
+        out = self._run("ls-files", "-z").stdout
+        return sorted(f for f in out.split("\0") if f)
+
     def reset_hard(self, ref: str) -> None:
         """Reset HEAD and the working tree to `ref` and delete untracked files (git clean -fd).
 

@@ -2,7 +2,7 @@
 
 CLI em Python que orquestra agentes de IA para construir software. Ele leva um pedido (funcionalidade, correção ou melhoria) até o merge na branch principal. No caminho, entende o domínio com você, quebra o trabalho em stories, implementa com TDD e valida com gates automáticos e revisão por agentes.
 
-> **Status:** em desenvolvimento. O ciclo completo funciona: pedido com discovery e refinamento (`request`, `discover`, `approve`, `refine`, `show`), e implementação com TDD, revisão, QA e merge na main até DONE (`run`, `resume`). Faltam o briefing técnico/revisão de arquitetura e a auto-melhoria. O pipeline com agentes está no [roadmap](#roadmap).
+> **Status:** em desenvolvimento. O ciclo completo funciona: pedido com discovery e refinamento (`request`, `discover`, `approve`, `refine`, `show`), e implementação com TDD, revisão, QA e merge na main até DONE (`run`, `resume`). Também há briefing técnico com bootstrap de projeto vazio (`brief`) e revisão de arquitetura no discovery. Falta a auto-melhoria. O pipeline com agentes está no [roadmap](#roadmap).
 
 ## Como funciona
 
@@ -34,6 +34,7 @@ uv run autodev --help
 
 ```bash
 uv run autodev init /caminho/do/projeto     # cria /caminho/do/projeto/.agent/
+uv run autodev brief --path /caminho        # briefing técnico: stack, ADRs, comandos; esqueleto se o projeto estiver vazio
 uv run autodev request "quero X" --path /caminho   # discovery no terminal (/done encerra) → refinamento → aprovar
 uv run autodev show S-0001 --path /caminho
 uv run autodev refine S-0001 -m "ajuste" --path /caminho
@@ -102,8 +103,8 @@ runtime:
 | 3 | Runtime de agentes (Claude Agent SDK), implementação e revisão, `autodev run`/`resume` | ✅ |
 | 4 | Discovery interativo e refinamento, `request`/`approve`/`refine`/`show` | ✅ |
 | 5 | QA, retrabalho, merge e conflitos, `discover` | ✅ |
-| 6 | Briefing técnico e revisão de arquitetura com ADRs | próximo |
-| 7 | `autodev improve` e regras de lint a partir de `standards/` | |
+| 6 | Briefing técnico e revisão de arquitetura com ADRs, `brief` | ✅ |
+| 7 | `autodev improve` e regras de lint a partir de `standards/` | próximo |
 | depois | RAG, PR no GitHub, tasks em paralelo, Jira | |
 
 ## Desenvolvimento

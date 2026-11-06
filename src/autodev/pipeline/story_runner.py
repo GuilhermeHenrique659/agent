@@ -38,6 +38,17 @@ class RunError(Exception):
     pass
 
 
+def check_state_ignored(repo: GitRepo) -> None:
+    """Orchestrator state (backlog, runs) must stay out of git."""
+    missing = [d for d in _STATE_DIRS if not repo.is_ignored(d)]
+    if missing:
+        listed = ", ".join(missing)
+        raise RunError(
+            f"Orchestrator state must not be versioned: {listed} not ignored by git. "
+            "Add `backlog/` and `runs/` to .agent/.gitignore."
+        )
+
+
 class _Failed(Exception):
     """An attempt budget was exhausted; carries the last failure."""
 
@@ -68,7 +79,7 @@ class StoryRunner:
             story = self._store.get(story_id)
         except KeyError as exc:
             raise RunError(f"Story {story_id} not found") from exc
-        self._check_state_ignored()
+        check_state_ignored(self._repo)
         if story.status == StoryStatus.DONE:
             return story
         if story.status not in _RESUMABLE:
@@ -85,15 +96,6 @@ class StoryRunner:
         finally:
             self._log.append("run_finished", detail=story.status.value)
         return story
-
-    def _check_state_ignored(self) -> None:
-        missing = [d for d in _STATE_DIRS if not self._repo.is_ignored(d)]
-        if missing:
-            listed = ", ".join(missing)
-            raise RunError(
-                f"Orchestrator state must not be versioned: {listed} not ignored by git. "
-                "Add `backlog/` and `runs/` to .agent/.gitignore."
-            )
 
     def _save(self, story: Story) -> None:
         self._store.save(story)

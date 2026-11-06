@@ -36,6 +36,7 @@ Pedido → DISCOVERY → REFINAMENTO → [aprovação humana] → IMPLEMENTAÇÃ
 14. **Settings/autenticação dos agentes** (`runtime` no config): por padrão só as settings do projeto-alvo (`setting_sources: [project]`). Quando a autenticação do Claude Code vem de um `apiKeyHelper` em `~/.claude/settings.json` (ex.: gateways corporativos), então é preciso `runtime.settings` (JSON mínimo, ex. só o `apiKeyHelper`; relativo a `.agent/`) ou `setting_sources: [user, project]` (herda também CLAUDE.md global, hooks, plugins). `cli_path` apontando para um wrapper do `claude` não funcionou (exit 71). Verificado só rodando de dentro de uma sessão do Claude Code. `max_budget_usd` opcional por papel.
 15. **Discovery/refinamento**: o orquestrador conduz o chat (cada turno é um `DiscoveryTurn` JSON); termina quando o agente devolve `done` + resultado, ou pelo `/done` do usuário, com teto `limits.max_discovery_turns`. Agentes de discovery/refiner são só leitura (Read/Grep/Glob) e devolvem dados; o **código** escreve glossary.md e events.md. Conversa e documentos no idioma do pedido. O `approve` exige estar na main e commita só `.agent/domain` e `.agent/architecture` (`docs(<id>): ...`) antes de gravar APPROVED.
 16. **QA e merge**: após o review aprovado, o QA verifica cada critério de aceite; reprovado → send_back (mesmo contador do review) → correção → review e QA de novo. Merge autônomo: pull (se `git.remote`), rebase na main, conflitos resolvidos pelo agente merger (o código confere que não restam marcadores; esgotou → `rebase --abort` → BLOCKED, main intacta), gates, `merge --ff-only`, push, DONE e `branch -d story/<id>`. Melhorias sugeridas pelo QA viram stories DRAFT **só depois do merge** (evita duplicar em retomadas); `autodev discover <id>` as leva ao discovery. Push falhou → BLOCKED com a main já mergeada localmente; o `resume` volta a IN_PROGRESS e refaz review/QA antes de tentar de novo.
+17. **Briefing e arquitetura** (agente architect, só leitura; o código grava tudo): `autodev brief` (oferecido no `request`/`discover` quando não há ADR além do template) é um chat → proposta → aceitar/feedback → ADRs Accepted, `standards/stack.md`, `commands` no config.yaml (edição pontual, preserva comentários) → commit `docs: technical briefing` na main. Repositório vazio (nada versionado fora de `.agent/`) → o implementer cria o esqueleto + teste smoke, validado pelos **gates** (exceção controlada ao TDD); falhou → reset até o commit de docs. No discovery, `needs_architecture_review` → architect propõe ADRs/componentes → você aceita ou dá feedback → seção `## Architecture decisions` na story, que o refiner transforma em tasks.
 
 ## Estrutura do `.agent/` no projeto-alvo
 
@@ -55,7 +56,7 @@ runs/                logs de execução (alimentam a auto-melhoria)
 
 ```
 src/autodev/
-  cli.py               init | status | check | request | discover | approve | refine | show | run | resume   (futuro: improve)
+  cli.py               init | status | check | brief | request | discover | approve | refine | show | run | resume   (futuro: improve)
   config/              models.py (pydantic, extra="forbid"), loader.py (load_config, ConfigError)
   domain/              role.py (Role), story.py (Story, Task, StoryStatus, InvalidTransition)
   pipeline/            state_store.py (StoryStore: save/get/has/values/next_id)
@@ -65,7 +66,10 @@ src/autodev/
                        outputs.py (saídas tipadas dos agentes), run_log.py (JSONL em .agent/runs/)
                        discovery.py (chat: DiscoveryTurn por turno, /done, limite de turnos), refinement.py
                        domain_docs.py (mescla glossary.md e acrescenta events.md, por código), story_docs.py
-                       request_flow.py (pedido → DRAFT → discovery → docs → REFINED), approval.py
+                       request_flow.py (pedido → DRAFT → discovery → [arquitetura] → docs → REFINED), approval.py
+                       conversation.py (converse: motor genérico de chat Turn[R]; ask_accept_or_feedback)
+                       briefing.py (brief → ADRs/standards/commands → commit → bootstrap se repo vazio)
+                       architecture.py (revisão de arquitetura com aceite do usuário), adr.py, config_edit.py
   prompts/             instruções embutidas por papel (test_writer, implementer, reviewer)
   ports/               agent_runtime.py (AgentRuntime.run / start_conversation → Conversation), context_source.py, user_io.py
   templates/agent/     template do .agent/ copiado pelo `autodev init`
@@ -91,8 +95,8 @@ Regras da `Story` (em `domain/story.py`): avanço só pela cadeia `draft→disco
 | 3 | `ClaudeSdkRuntime` + `FakeAgentRuntime`, implementação e revisão por agente, `autodev run <story>`, `autodev resume` | ✅ feito (teste live passou) |
 | 4 | Discovery interativo (UL, event storming) + refinamento + `request`/`approve`/`refine`/`show` | ✅ feito (discovery ainda não testado com o modelo real) |
 | 5 | QA, loop de retrabalho → BLOCKED, merge e conflitos → DONE, `autodev discover` | ✅ feito |
-| 6 | Briefing técnico (projeto vazio) e revisão de arquitetura/ADRs | próximo |
-| 7 | `autodev improve` (retro + refatoração) e geração de regras de lint a partir de `standards/` | |
+| 6 | Briefing técnico (`autodev brief`, bootstrap de projeto vazio) e revisão de arquitetura/ADRs no discovery | ✅ feito |
+| 7 | `autodev improve` (retro + refatoração) e geração de regras de lint a partir de `standards/` | próximo |
 | depois | RAG, PR no GitHub, worktrees/paralelismo, Jira | |
 
 ## Comandos

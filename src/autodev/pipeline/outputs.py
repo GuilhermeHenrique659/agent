@@ -51,10 +51,16 @@ class DiscoveryResult(BaseModel):
     open_questions: list[str] = []
 
 
-class DiscoveryTurn(BaseModel):
+class Turn[R: BaseModel](BaseModel):
+    """One reply of a chat agent: what the user sees, whether it is finished, and the result."""
+
     message: str
     done: bool
-    result: DiscoveryResult | None = None
+    result: R | None = None
+
+
+class DiscoveryTurn(Turn[DiscoveryResult]):
+    pass
 
 
 class RefinedTask(BaseModel):
@@ -95,3 +101,38 @@ class QaOutput(BaseModel):
 class MergeOutput(BaseModel):
     summary: str
     resolved_files: list[str] = []
+
+
+class AdrDraft(BaseModel):
+    title: str
+    context: str
+    decision: str
+    consequences: str
+
+
+class Commands(BaseModel):
+    build: str | None = None
+    test: str | None = None
+    lint: str | None = None
+
+
+class TechBrief(BaseModel):
+    summary: str
+    adrs: list[AdrDraft] = Field(min_length=1)
+    commands: Commands
+    standards: list[str] = []
+
+
+class TechBriefTurn(Turn[TechBrief]):
+    pass
+
+
+class ArchitectureReview(BaseModel):
+    summary: str
+    adrs: list[AdrDraft] = []
+    components: list[str] = []
+    design_notes: str = ""
+
+
+class BootstrapOutput(BaseModel):
+    summary: str

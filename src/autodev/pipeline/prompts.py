@@ -6,7 +6,13 @@ from autodev.config.models import AgentProfile
 from autodev.domain.role import Role
 from autodev.domain.story import Story, Task
 from autodev.gates.runner import GateReport
-from autodev.pipeline.outputs import Finding, QaOutput
+from autodev.pipeline.outputs import (
+    ArchitectureReview,
+    DiscoveryResult,
+    Finding,
+    QaOutput,
+    TechBrief,
+)
 
 MAX_FEEDBACK_CHARS = 8000
 
@@ -114,7 +120,8 @@ def build_refiner_prompt(story: Story, context: list[Path], feedback: str | None
     prompt = (
         "Refine this story: user story, acceptance criteria (Given/When/Then) and a short "
         "ordered list of tasks, each small enough for one red-to-green TDD cycle. "
-        "Use the same language as the request and the glossary terms.\n\n"
+        "Use the same language as the request and the glossary terms. Honour the architecture "
+        "decisions in the description: create tasks for each component it lists.\n\n"
         f"Story {story.id}: {story.title}\n\nDescription:\n{story.description.strip()}"
     )
     if story.acceptance_criteria or story.tasks:
@@ -181,3 +188,65 @@ def build_merge_fix_prompt(
 
 def gate_feedback(report: GateReport) -> str:
     return "\n".join(f"Gate {r.name} failed:\n{r.output}" for r in report.failures)
+
+
+def build_brief_prompt(context: list[Path], empty: bool) -> str:
+    state = (
+        "The repository is empty: the stack and architecture are still to be decided."
+        if empty
+        else "The repository already has code: read it and document what exists."
+    )
+    return (
+        "Start the technical briefing. Define the stack (language, framework), the architecture "
+        "style, the testing and lint tools, the build/test/lint shell commands and any "
+        "constraints. Ask a few focused questions per turn. Finish with done=true and the "
+        "TechBrief (summary, ADRs, commands, standards). Reply in the language of the user.\n\n"
+        f"{state}\n\n{_context_section(context)}"
+    )
+
+
+def build_brief_feedback_prompt(previous: TechBrief, feedback: str) -> str:
+    return (
+        "The user reviewed your technical brief and asked for changes. Continue the briefing, "
+        "apply the feedback and finish with done=true and the updated TechBrief.\n\n"
+        f"Previous proposal (JSON):\n{previous.model_dump_json(indent=2)}\n\n"
+        f"Feedback:\n{feedback[-MAX_FEEDBACK_CHARS:]}"
+    )
+
+
+def build_architecture_review_prompt(
+    story: Story,
+    result: DiscoveryResult,
+    context: list[Path],
+    previous: ArchitectureReview | None = None,
+    feedback: str | None = None,
+) -> str:
+    prompt = (
+        "Review the architecture for this story: propose the decisions (ADRs), the components "
+        "and the design notes it needs. Stay consistent with the existing ADRs.\n\n"
+        f"Story {story.id}: {story.title}\n\nProblem:\n{result.problem.strip()}\n\n"
+        f"Architecture notes from discovery:\n{result.architecture_notes.strip() or '(none)'}\n\n"
+        f"Domain events: {', '.join(result.event_storming.domain_events) or '(none)'}\n"
+        f"Aggregates: {', '.join(result.event_storming.aggregates) or '(none)'}\n\n"
+        f"{_context_section(context)}"
+    )
+    if previous is not None:
+        prompt += f"\n\nPrevious proposal (JSON):\n{previous.model_dump_json(indent=2)}"
+    if feedback:
+        prompt += f"\n\nFeedback to apply:\n{feedback[-MAX_FEEDBACK_CHARS:]}"
+    return prompt
+
+
+def build_bootstrap_prompt(brief: TechBrief, context: list[Path], feedback: str | None) -> str:
+    commands = brief.commands
+    standards = "\n".join(f"- {s}" for s in brief.standards) or "- (none)"
+    adrs = "\n".join(f"- {a.title}: {a.decision}" for a in brief.adrs)
+    return (
+        "Create the project skeleton for this empty repository, following the ADRs and "
+        "standards below. Configure the test runner and the linters so that the configured "
+        "commands work, and add one smoke test that passes. Do not implement features.\n\n"
+        f"Summary:\n{brief.summary}\n\nDecisions:\n{adrs}\n\nStandards:\n{standards}\n\n"
+        f"Commands (must work when you finish):\n- build: {commands.build}\n"
+        f"- test: {commands.test}\n- lint: {commands.lint}\n\n"
+        f"{_context_section(context)}{_feedback_section(feedback)}"
+    )

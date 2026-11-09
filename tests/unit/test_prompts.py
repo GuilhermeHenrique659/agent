@@ -22,6 +22,7 @@ from autodev.pipeline.prompts import (
     build_refiner_prompt,
     build_review_fix_prompt,
     build_reviewer_prompt,
+    build_test_defect_prompt,
     build_test_fix_prompt,
     build_test_writer_prompt,
     load_instructions,
@@ -247,3 +248,26 @@ def test_refiner_prompt_states_task_limit_and_testable_rule(tmp_path: Path) -> N
     assert "documentation" in prompt
     text = load_instructions(Role.REFINER, profile_for(Role.REFINER), tmp_path)
     assert "failing test" in text and "documentation" in text
+
+
+def test_implementer_prompt_mentions_test_defect(tmp_path: Path) -> None:
+    instructions = load_instructions(Role.IMPLEMENTER, profile_for(Role.IMPLEMENTER), tmp_path)
+    prompt = build_implementer_prompt(make_story(), Task("T1", "Say hello"), "main", [], None)
+    assert "test_defect" in instructions
+    assert "test_defect" in prompt
+
+
+def test_test_defect_prompt_forbids_weakening_and_limits_to_tests() -> None:
+    text = build_test_defect_prompt(
+        make_story(),
+        Task("T1", "Say hello"),
+        "main",
+        [],
+        "the fake stores the same object",
+        "FAILED tests/test_x.py::test_a",
+    )
+    assert "Task T1: Say hello" in text
+    assert "the fake stores the same object" in text
+    assert "FAILED tests/test_x.py::test_a" in text
+    assert "only test files" in text
+    assert "never delete, skip or weaken" in text.lower()

@@ -93,7 +93,13 @@ def build_test_writer_prompt(
 def build_implementer_prompt(
     story: Story, task: Task, base_branch: str, context: list[Path], feedback: str | None = None
 ) -> str:
-    intro = "Make the failing tests for this task pass with the minimum code. Do not touch tests."
+    intro = (
+        "Make the failing tests for this task pass with the minimum code. Do not touch tests. "
+        "If you conclude that a failing test is itself wrong (a bug in a test, fixture, fake or "
+        "helper, not in production code), set `test_defect` in your output describing exactly "
+        "what is wrong and where, and do not change production code to work around it; "
+        "otherwise leave `test_defect` null."
+    )
     return _task_prompt(intro, story, task, base_branch, context, feedback)
 
 
@@ -221,6 +227,24 @@ def build_test_fix_prompt(
         "config or build files."
     )
     return _task_prompt(intro, story, task, base_branch, context, gate_feedback)
+
+
+def build_test_defect_prompt(
+    story: Story,
+    task: Task,
+    base_branch: str,
+    context: list[Path],
+    test_defect: str,
+    failure_output: str | None,
+) -> str:
+    intro = (
+        "The implementer reports that the tests of this task have a defect, so they fail even "
+        f"though the implementation is correct.\n\nReported test defect:\n{test_defect}\n\n"
+        "Fix only that defect in test code (tests, fixtures, fakes, helpers). Never delete, skip "
+        "or weaken assertions about the story's behaviour. Touch only test files: no production "
+        "code, config or build files."
+    )
+    return _task_prompt(intro, story, task, base_branch, context, failure_output)
 
 
 def gate_feedback(report: GateReport) -> str:

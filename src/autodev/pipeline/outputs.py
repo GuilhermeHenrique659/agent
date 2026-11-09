@@ -12,6 +12,7 @@ class TestWriterOutput(BaseModel):
 
 class ImplementerOutput(BaseModel):
     summary: str
+    test_defect: str | None = None
 
 
 class Finding(BaseModel):

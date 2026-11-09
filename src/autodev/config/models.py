@@ -120,6 +120,9 @@ class TddConfig(BaseModel):
     model_config = _STRICT
 
     test_globs: list[str] = Field(default_factory=lambda: list(DEFAULT_TEST_GLOBS))
+    # Multiline regex matching one test definition per line; used to make sure test-fix turns
+    # never remove tests.
+    test_name_pattern: str = r"^\s*(?:async\s+)?def test_\w+|^\s*(?:it|test)\s*\("
 
 
 SettingSource = Literal["user", "project", "local"]

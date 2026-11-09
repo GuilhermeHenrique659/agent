@@ -48,6 +48,9 @@ tdd:
     - "*_test.go"
     - "*.test.*"
     - "*.spec.*"
+  # Multiline regex that matches one test definition per line. Used to make sure test-fix turns
+  # (test defects reported by the implementer) never remove tests.
+  test_name_pattern: '^\s*(?:async\s+)?def test_\w+|^\s*(?:it|test)\s*\('
 
 # `autodev run` suggests `autodev improve` once this many stories reached DONE since the last improve.
 improve:

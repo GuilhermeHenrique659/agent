@@ -789,3 +789,128 @@ def test_commit_subjects_are_short_and_keep_full_title_in_body(tmp_path: Path) -
         ["git", "log", "--format=%b%x00"], cwd=env.root, capture_output=True, text=True
     ).stdout
     assert bodies.count(title) == 2
+
+
+HELPER_BAD = "def expected():\n    return 3\n"
+HELPER_GOOD = "def expected():\n    return 2\n"
+CHECK_HELPER = (
+    "import sys\nfrom pathlib import Path\n"
+    "sys.path.insert(0, str(Path(__file__).resolve().parent.parent))\n"
+    "sys.path.insert(0, str(Path(__file__).resolve().parent))\n"
+    "from helper import expected\nfrom impl import value\n"
+    "def test_value():\n    pass\n"
+    "def test_other():\n    pass\n"
+    "sys.exit(0 if value() == expected() else 1)\n"
+)
+CHECK_HELPER_ONE_TEST = CHECK_HELPER.replace("def test_other():\n    pass\n", "")
+DEFECT = "tests/helper.py expected() returns 3 instead of 2"
+
+
+def defect_impl() -> Step:
+    return Step(
+        ImplementerOutput(summary="done", test_defect=DEFECT), writer({"impl.py": IMPL_GOOD})
+    )
+
+
+def defect_fix(files: dict[str, str]) -> Step:
+    return Step(TestWriterOutput(summary="fixed", test_files=list(files)), writer(files))
+
+
+def helper_red() -> Step:
+    return tw({"tests/check.py": CHECK_HELPER, "tests/helper.py": HELPER_BAD})
+
+
+def test_lint_test_fix_turn_triggers_despite_ignored_venv_path_in_output(tmp_path: Path) -> None:
+    lint = (
+        "grep -Hn LINTBAD tests/check.py && echo .venv/lib/dep.py:1 DeprecationWarning "
+        "&& exit 1 || exit 0"
+    )
+    env = make_env(tmp_path, lint=lint)
+    (env.root / ".venv/lib").mkdir(parents=True)
+    (env.root / ".venv/lib/dep.py").write_text("x\n")
+    (env.root / ".gitignore").write_text(".venv/\n")
+    env.repo.commit_all("ignore venv")
+    env.runtime.script(
+        Role.TEST_WRITER,
+        tw({"tests/check.py": BAD_LINT_TESTS}),
+        fix_tests({"tests/check.py": CHECK}),
+    )
+    env.runtime.script(Role.IMPLEMENTER, impl())
+    env.runtime.script(Role.REVIEWER, approve())
+    env.runtime.script(Role.QA, qa_ok())
+    story = run(env)
+    assert story.status == StoryStatus.DONE
+    assert len(env.runtime.requests_for(Role.IMPLEMENTER)) == 1
+    assert subjects(env.root)[0] == "test(T1): fix test lint"
+
+
+def test_implementer_reported_test_defect_gets_test_writer_fix(tmp_path: Path) -> None:
+    env = make_env(tmp_path)
+    env.runtime.script(Role.TEST_WRITER, helper_red(), defect_fix({"tests/helper.py": HELPER_GOOD}))
+    env.runtime.script(Role.IMPLEMENTER, defect_impl())
+    env.runtime.script(Role.REVIEWER, approve())
+    env.runtime.script(Role.QA, qa_ok())
+    story = run(env)
+    assert story.status == StoryStatus.DONE
+    assert len(env.runtime.requests_for(Role.IMPLEMENTER)) == 1
+    fix_request = env.runtime.requests_for(Role.TEST_WRITER)[1]
+    assert DEFECT in fix_request.prompt
+    assert subjects(env.root)[:3] == [
+        "test(T1): fix test defect",
+        "feat(T1): Say two",
+        "test(T1): Say two",
+    ]
+    events = [r for r in log_records(env.root) if r["event"] == "test_defect_fix"]
+    assert events and events[-1]["ok"] is True
+
+
+def test_test_defect_fix_that_removes_tests_is_reset(tmp_path: Path) -> None:
+    env = make_env(tmp_path)
+    env.runtime.script(
+        Role.TEST_WRITER,
+        helper_red(),
+        defect_fix({"tests/helper.py": HELPER_GOOD, "tests/check.py": CHECK_HELPER_ONE_TEST}),
+        defect_fix({"tests/helper.py": HELPER_GOOD}),
+    )
+    env.runtime.script(Role.IMPLEMENTER, defect_impl())
+    env.runtime.script(Role.REVIEWER, approve())
+    env.runtime.script(Role.QA, qa_ok())
+    story = run(env)
+    assert story.status == StoryStatus.DONE
+    third = env.runtime.requests_for(Role.TEST_WRITER)[2]
+    assert "2" in third.prompt and "1" in third.prompt and "test definitions" in third.prompt
+    assert "def test_other" in (env.root / "tests/check.py").read_text()
+    assert subjects(env.root)[0] == "test(T1): fix test defect"
+
+
+def test_test_defect_fix_touching_production_code_is_reset(tmp_path: Path) -> None:
+    env = make_env(tmp_path)
+    env.runtime.script(
+        Role.TEST_WRITER,
+        helper_red(),
+        defect_fix({"tests/helper.py": HELPER_GOOD, "impl.py": IMPL_GOOD + "# touched\n"}),
+        defect_fix({"tests/helper.py": HELPER_GOOD}),
+    )
+    env.runtime.script(Role.IMPLEMENTER, defect_impl())
+    env.runtime.script(Role.REVIEWER, approve())
+    env.runtime.script(Role.QA, qa_ok())
+    story = run(env)
+    assert story.status == StoryStatus.DONE
+    third = env.runtime.requests_for(Role.TEST_WRITER)[2]
+    assert "only touch test files" in third.prompt and "impl.py" in third.prompt
+    assert "touched" not in (env.root / "impl.py").read_text()
+
+
+def test_failure_without_test_defect_retries_implementer(tmp_path: Path) -> None:
+    env = make_env(tmp_path)
+    env.runtime.script(Role.TEST_WRITER, helper_red())
+    env.runtime.script(
+        Role.IMPLEMENTER,
+        impl({"impl.py": IMPL_GOOD}),
+        impl({"impl.py": IMPL_GOOD + "# again\n"}),
+        impl({"impl.py": IMPL_GOOD + "# and again\n"}),
+    )
+    story = run(env)
+    assert story.status == StoryStatus.BLOCKED
+    assert len(env.runtime.requests_for(Role.TEST_WRITER)) == 1
+    assert len(env.runtime.requests_for(Role.IMPLEMENTER)) == 3

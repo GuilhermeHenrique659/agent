@@ -1,4 +1,6 @@
+import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -50,6 +52,13 @@ def check_state_ignored(repo: GitRepo) -> None:
             f"Orchestrator state must not be versioned: {listed} not ignored by git. "
             "Add `backlog/` and `runs/` to .agent/.gitignore."
         )
+
+
+@dataclass(frozen=True)
+class _TestTurn:
+    """The next attempt is a test writer turn: a lint fix (no `defect`) or a test defect fix."""
+
+    defect: str | None = None
 
 
 class _Failed(Exception):
@@ -248,6 +257,11 @@ class StoryRunner:
                 story, task, base, self._context_paths(), gate_output
             )
 
+        def build_test_defect(defect: str, failure_output: str | None) -> str:
+            return prompts.build_test_defect_prompt(
+                story, task, base, self._context_paths(), defect, failure_output
+            )
+
         await self._implement(
             task,
             build,
@@ -256,6 +270,7 @@ class StoryRunner:
             first_prefix="feat",
             tdd=True,
             build_test_fix=build_test_fix,
+            build_test_defect=build_test_defect,
         )
 
     async def _implement(
@@ -269,6 +284,7 @@ class StoryRunner:
         tdd: bool,
         label: str = "review",
         build_test_fix: Callable[[str | None], str] | None = None,
+        build_test_defect: Callable[[str, str | None], str] | None = None,
     ) -> None:
         """Run the implementer until the checks pass or the attempt budget is spent.
 
@@ -276,34 +292,62 @@ class StoryRunner:
         commits that break the TDD rules, and agent errors, are reset.
         With `build_test_fix`, a gate failure that points only at test files makes the next
         attempt a test writer turn that fixes those files (the implementer may not touch them).
+        With `build_test_defect`, an implementer that reports a defect in the tests (while they
+        still fail) makes the next attempt a test writer turn that fixes only that defect.
         """
         feedback: str | None = None
         committed = False
-        test_fix_next = False
+        next_turn: _TestTurn | None = None
         globs = self._config.tdd.test_globs
         what = task.id if task else label
         for _ in range(self._config.limits.max_attempts):
             before = self._repo.head()
-            test_fix = test_fix_next and task is not None and build_test_fix is not None
-            test_fix_next = False
-            if test_fix and task is not None and build_test_fix is not None:
+            turn = next_turn
+            next_turn = None
+            if turn is not None and (
+                task is None
+                or (
+                    build_test_defect is None if turn.defect is not None else build_test_fix is None
+                )
+            ):
+                turn = None
+            tests_before = self._count_tests() if turn and turn.defect is not None else 0
+            declared: str | None = None
+            if turn is not None and task is not None:
+                if turn.defect is not None and build_test_defect is not None:
+                    fix_prompt = build_test_defect(turn.defect, feedback)
+                elif build_test_fix is not None:
+                    fix_prompt = build_test_fix(feedback)
+                else:
+                    raise AssertionError("unreachable: test turn without prompt builder")
                 out: ImplementerOutput | TestWriterOutput | str = await self._agent(
-                    Role.TEST_WRITER, build_test_fix(feedback), TestWriterOutput, task
+                    Role.TEST_WRITER, fix_prompt, TestWriterOutput, task
                 )
             else:
                 out = await self._agent(
                     Role.IMPLEMENTER, build_prompt(feedback), ImplementerOutput, task
                 )
+                if isinstance(out, ImplementerOutput) and tdd and build_test_defect is not None:
+                    declared = out.test_defect or None
             if isinstance(out, str):
                 feedback = out
                 self._repo.reset_hard(before)
-                test_fix_next = test_fix
+                next_turn = turn
                 continue
             if self._repo.has_changes():
-                self._format(task, protect_non_tests=test_fix)
+                self._format(task, protect_non_tests=turn is not None)
             no_change = not self._repo.has_changes()
+            if no_change and turn is not None and turn.defect is not None:
+                feedback = "The test writer made no changes; the reported defect must be fixed."
+                next_turn = turn
+                continue
             if no_change and not committed:
                 feedback = "The implementer made no changes."
+                if declared:
+                    tested = self._run_tests()
+                    if not tested.ok:
+                        feedback = f"Tests failed:\n{tested.output}"
+                        next_turn = _TestTurn(declared)
                 continue
             if no_change:
                 # An earlier attempt's commit was kept (its TDD rules were already checked);
@@ -316,9 +360,10 @@ class StoryRunner:
                     "You made no changes, but the gates still fail:\n"
                     + prompts.gate_feedback(report)
                 )
-                test_fix_next = tdd and self._only_test_files_failed(report)
+                next_turn = self._next_turn(tdd, report, declared)
                 continue
-            if test_fix and task is not None:
+            if turn is not None and task is not None:
+                event = "test_defect_fix" if turn.defect is not None else "test_fix"
                 others = [p for p in self._repo.changed_paths() if not is_test_file(p, globs)]
                 if others:
                     self._repo.reset_hard(before)
@@ -326,16 +371,32 @@ class StoryRunner:
                     feedback = (
                         f"A test fix may only touch test files; non-test files changed:\n{listed}"
                     )
-                    self._log.append("test_fix", task=task.id, ok=False, detail=feedback)
-                    test_fix_next = True
+                    self._log.append(event, task=task.id, ok=False, detail=feedback)
+                    next_turn = turn
                     continue
-                self._repo.commit_all(commit_message("test", task.id, "fix test lint"))
+                if turn.defect is not None:
+                    tests_after = self._count_tests()
+                    if tests_after < tests_before:
+                        self._repo.reset_hard(before)
+                        feedback = (
+                            "A test defect fix must not remove tests: there were "
+                            f"{tests_before} test definitions before and {tests_after} after "
+                            "your change."
+                        )
+                        self._log.append(event, task=task.id, ok=False, detail=feedback)
+                        next_turn = turn
+                        continue
+                    subject = "fix test defect"
+                else:
+                    subject = "fix test lint"
+                self._repo.commit_all(commit_message("test", task.id, subject))
                 tested = self._run_tests()
+                detail = turn.defect if tested.ok and turn.defect is not None else None
                 self._log.append(
-                    "test_fix",
+                    event,
                     task=task.id,
                     ok=tested.ok,
-                    detail=tested.output[-_LOG_DETAIL_CHARS:],
+                    detail=detail or tested.output[-_LOG_DETAIL_CHARS:],
                 )
                 if not tested.ok:
                     feedback = f"Tests failed after your change:\n{tested.output}"
@@ -356,6 +417,8 @@ class StoryRunner:
                         else:
                             committed = True
                             feedback = f"Tests failed after your change:\n{green.output}"
+                            if declared:
+                                next_turn = _TestTurn(declared)
                         continue
             committed = True
             report = run_gates(self._config, self._root)
@@ -363,11 +426,30 @@ class StoryRunner:
             if report.ok:
                 return
             feedback = prompts.gate_feedback(report)
-            test_fix_next = tdd and self._only_test_files_failed(report)
+            next_turn = self._next_turn(tdd, report, declared)
         raise _Failed(f"{what}: implementation failed. {feedback}")
 
+    def _next_turn(self, tdd: bool, report: GateReport, declared: str | None) -> "_TestTurn | None":
+        if not tdd:
+            return None
+        if declared:
+            return _TestTurn(declared)
+        return _TestTurn() if self._only_test_files_failed(report) else None
+
+    def _count_tests(self) -> int:
+        """Test definitions (`tdd.test_name_pattern` matches) in the test files of the work tree."""
+        regex = re.compile(self._config.tdd.test_name_pattern, re.MULTILINE)
+        paths = set(self._repo.tracked_files()) | set(self._repo.changed_paths())
+        total = 0
+        for path in paths:
+            file = self._root / path
+            if is_test_file(path, self._config.tdd.test_globs) and file.is_file():
+                total += sum(1 for _ in regex.finditer(file.read_text(errors="replace")))
+        return total
+
     def _only_test_files_failed(self, report: GateReport) -> bool:
-        tests, others = gate_failure_files(report, self._root, self._config.tdd.test_globs)
+        tracked = set(self._repo.tracked_files())
+        tests, others = gate_failure_files(report, self._root, self._config.tdd.test_globs, tracked)
         return bool(tests) and not others
 
     def _run_tests(self) -> GateResult:

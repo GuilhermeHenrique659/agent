@@ -240,3 +240,19 @@ def test_max_tasks_per_story_default_and_template(tmp_path: Path) -> None:
     assert "max_tasks_per_story" in text
     write_config(tmp_path, text)
     assert load_config(tmp_path).limits.max_tasks_per_story == 8
+
+
+def test_test_name_pattern_default_and_template(tmp_path: Path) -> None:
+    import re
+    from importlib.resources import files
+
+    write_config(tmp_path, "")
+    pattern = load_config(tmp_path).tdd.test_name_pattern
+    regex = re.compile(pattern, re.MULTILINE)
+    source = "def test_a():\n    pass\n  async def test_b():\n    pass\nit('x', () => {})\n"
+    assert len(regex.findall(source)) == 3
+    assert not regex.findall("def helper():\n    pass\n")
+    text: Any = (files("autodev") / "templates" / "agent" / "config.yaml").read_text()
+    assert "test_name_pattern" in text
+    write_config(tmp_path, text)
+    assert load_config(tmp_path).tdd.test_name_pattern == pattern

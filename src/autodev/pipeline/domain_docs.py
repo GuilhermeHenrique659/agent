@@ -61,6 +61,35 @@ def merge_glossary(path: Path, entries: list[GlossaryEntry]) -> None:
     path.write_text("\n".join(lines) + "\n")
 
 
+_TEMPLATE_SECTIONS = {
+    "Domain events",
+    "Commands",
+    "Actors",
+    "Aggregates",
+    "Policies",
+    "Read models",
+    "Read Models",
+}
+
+
+def _drop_empty_template_sections(text: str) -> str:
+    lines = text.splitlines()
+    kept: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("## ") and line[3:].strip() in _TEMPLATE_SECTIONS:
+            end = i + 1
+            while end < len(lines) and not lines[end].startswith("## "):
+                end += 1
+            if all(not ln.strip() for ln in lines[i + 1 : end]):
+                i = end
+                continue
+        kept.append(line)
+        i += 1
+    return "\n".join(kept)
+
+
 def append_event_storming(path: Path, story_id: str, title: str, es: EventStorming) -> None:
     sections = [
         ("Domain events", es.domain_events),
@@ -75,7 +104,9 @@ def append_event_storming(path: Path, story_id: str, title: str, es: EventStormi
         if items:
             bullets = "\n".join(f"- {item}" for item in items)
             parts.append(f"### {name}\n{bullets}")
-    existing = path.read_text().rstrip("\n") if path.is_file() else ""
+    existing = (
+        _drop_empty_template_sections(path.read_text()).rstrip("\n") if path.is_file() else ""
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     prefix = f"{existing}\n\n" if existing else ""
     path.write_text(prefix + "\n\n".join(parts) + "\n")

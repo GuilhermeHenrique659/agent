@@ -226,3 +226,17 @@ def test_format_command_default_and_template(tmp_path: Path) -> None:
     assert "format: null" in text
     write_config(tmp_path, text)
     assert load_config(tmp_path).commands.format is None
+
+
+def test_max_tasks_per_story_default_and_template(tmp_path: Path) -> None:
+    from importlib.resources import files
+
+    write_config(tmp_path, "")
+    assert load_config(tmp_path).limits.max_tasks_per_story == 8
+    write_config(tmp_path, "limits:\n  max_tasks_per_story: 0\n")
+    with pytest.raises(ConfigError, match="max_tasks_per_story"):
+        load_config(tmp_path)
+    text: Any = (files("autodev") / "templates" / "agent" / "config.yaml").read_text()
+    assert "max_tasks_per_story" in text
+    write_config(tmp_path, text)
+    assert load_config(tmp_path).limits.max_tasks_per_story == 8

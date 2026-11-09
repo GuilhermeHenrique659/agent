@@ -131,10 +131,16 @@ def build_discovery_prompt(request: str, context: list[Path]) -> str:
     )
 
 
-def build_refiner_prompt(story: Story, context: list[Path], feedback: str | None = None) -> str:
+def build_refiner_prompt(
+    story: Story, context: list[Path], feedback: str | None = None, max_tasks: int = 8
+) -> str:
     prompt = (
         "Refine this story: user story, acceptance criteria (Given/When/Then) and a short "
-        "ordered list of tasks, each small enough for one red-to-green TDD cycle. "
+        f"ordered list of at most {max_tasks} tasks, each small enough for one red-to-green "
+        "TDD cycle. "
+        "Every task must describe observable behaviour that a failing test can prove; never "
+        "create tasks that are only documentation, configuration or refactoring without "
+        "behaviour (fold documentation updates into the task whose behaviour they document). "
         "Use the same language as the request and the glossary terms. Honour the architecture "
         "decisions in the description: create tasks for each component it lists.\n\n"
         f"Story {story.id}: {story.title}\n\nDescription:\n{story.description.strip()}"

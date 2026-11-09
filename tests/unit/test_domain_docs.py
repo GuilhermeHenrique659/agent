@@ -61,3 +61,42 @@ def test_append_event_storming_writes_section_omitting_empty_lists(tmp_path: Pat
     append_event_storming(path, "S-0002", "Other", EventStorming(commands=["Pay"]))
     assert path.read_text().startswith(text.rstrip("\n"))
     assert "## S-0002: Other" in path.read_text()
+
+
+_ES = EventStorming(domain_events=["Order paid"], commands=["Pay order"])
+
+
+def test_append_event_storming_removes_empty_template_sections(tmp_path: Path) -> None:
+    path = tmp_path / "events.md"
+    path.write_text(
+        "# Event storming\n\n## Domain events\n\n## Commands\n\n## Actors\n\n"
+        "## Aggregates\n\n## Policies\n\n## Read models\n"
+    )
+    append_event_storming(path, "S-0001", "Pay", _ES)
+    text = path.read_text()
+    assert text.startswith("# Event storming\n\n## S-0001: Pay\n")
+    assert "## Domain events" not in text.splitlines()
+    assert "## Read models" not in text.splitlines()
+    assert "- Order paid" in text
+
+
+def test_append_event_storming_keeps_non_empty_sections_and_other_text(tmp_path: Path) -> None:
+    path = tmp_path / "events.md"
+    path.write_text(
+        "# Event storming\n\nintro\n\n## Domain events\n- Kept event\n\n## Commands\n\n"
+        "## Custom\n\n## Actors\n"
+    )
+    append_event_storming(path, "S-0001", "Pay", _ES)
+    text = path.read_text()
+    lines = text.splitlines()
+    assert "## Domain events\n- Kept event" in text
+    assert "intro" in text and "## Custom" in lines
+    assert "## Commands" not in lines and "## Actors" not in lines
+
+
+def test_template_events_md_has_no_empty_sections() -> None:
+    from importlib.resources import files
+
+    text = (files("autodev") / "templates" / "agent" / "domain" / "events.md").read_text()
+    assert text.startswith("# Event storming")
+    assert "##" not in text

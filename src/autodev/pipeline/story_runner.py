@@ -11,6 +11,7 @@ from autodev.gates.failure_files import gate_failure_files
 from autodev.gates.runner import GateReport, GateResult, run_command, run_gates
 from autodev.gates.tdd import TddGuard, is_test_file
 from autodev.pipeline import prompts
+from autodev.pipeline.commit_message import commit_message
 from autodev.pipeline.merge import MergeFailed, Merger
 from autodev.pipeline.outputs import (
     ImplementerOutput,
@@ -223,7 +224,7 @@ class StoryRunner:
             if not self._repo.has_changes():
                 feedback = "The test writer made no changes; tests must be written."
                 continue
-            sha = self._repo.commit_all(f"test({task.id}): {task.title}")
+            sha = self._repo.commit_all(commit_message("test", task.id, task.title))
             result = self._guard.check_red(sha)
             self._log_check("tdd_red", task, result)
             if result.ok:
@@ -250,7 +251,8 @@ class StoryRunner:
         await self._implement(
             task,
             build,
-            f"({task.id}): {task.title}",
+            task.id,
+            task.title,
             first_prefix="feat",
             tdd=True,
             build_test_fix=build_test_fix,
@@ -260,7 +262,8 @@ class StoryRunner:
         self,
         task: Task | None,
         build_prompt: Callable[[str | None], str],
-        message: str,
+        scope: str,
+        title: str,
         *,
         first_prefix: str,
         tdd: bool,
@@ -326,7 +329,7 @@ class StoryRunner:
                     self._log.append("test_fix", task=task.id, ok=False, detail=feedback)
                     test_fix_next = True
                     continue
-                self._repo.commit_all(f"test({task.id}): fix test lint")
+                self._repo.commit_all(commit_message("test", task.id, "fix test lint"))
                 tested = self._run_tests()
                 self._log.append(
                     "test_fix",
@@ -339,7 +342,7 @@ class StoryRunner:
                     continue
             else:
                 prefix = "fix" if committed else first_prefix
-                sha = self._repo.commit_all(f"{prefix}{message}")
+                sha = self._repo.commit_all(commit_message(prefix, scope, title))
                 if tdd:
                     green = self._guard.check_green(sha)
                     self._log_check("tdd_green", task, green)
@@ -427,7 +430,8 @@ class StoryRunner:
                     await self._implement(
                         None,
                         build_review_fix,
-                        "(review): address review findings",
+                        "review",
+                        "address review findings",
                         first_prefix="fix",
                         tdd=False,
                     )
@@ -454,7 +458,8 @@ class StoryRunner:
             await self._implement(
                 None,
                 build_qa_fix,
-                "(qa): address QA findings",
+                "qa",
+                "address QA findings",
                 first_prefix="fix",
                 tdd=False,
                 label="qa",
@@ -481,10 +486,10 @@ class StoryRunner:
             self._log_report(None, report)
             return report
 
-        async def fix_gates(build: Callable[[str | None], str], message: str) -> None:
+        async def fix_gates(build: Callable[[str | None], str], title: str) -> None:
             try:
                 await self._implement(
-                    None, build, message, first_prefix="fix", tdd=False, label="merge"
+                    None, build, "merge", title, first_prefix="fix", tdd=False, label="merge"
                 )
             except _Failed as failure:
                 raise MergeFailed(str(failure)) from failure

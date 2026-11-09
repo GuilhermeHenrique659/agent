@@ -17,6 +17,7 @@ limits:
   max_attempts: 3  # review/QA rejections before a story is blocked
   command_timeout_s: 900  # max seconds for each build/test/lint command
   max_discovery_turns: 20  # max agent turns in the interactive discovery chat
+  max_tasks_per_story: 8  # max tasks the refiner may create for a story
 
 # Which Claude Code settings agent sessions load (authentication lives there).
 runtime:

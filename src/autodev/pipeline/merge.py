@@ -14,7 +14,7 @@ _END = ">>>>>>>"
 
 MergerCall = Callable[[str], Awaitable[MergeOutput | str]]
 RunGates = Callable[[], GateReport]
-# Runs the implementer until the gates pass; takes (prompt builder, commit message suffix).
+# Runs the implementer until the gates pass; takes (prompt builder, commit title).
 FixGates = Callable[[Callable[[str | None], str], str], Awaitable[None]]
 
 
@@ -135,4 +135,4 @@ class Merger:
         def build(feedback: str | None) -> str:
             return prompts.build_merge_fix_prompt(story, base, self._context(), feedback or initial)
 
-        await self._fix_gates(build, "(merge): make gates pass after rebase")
+        await self._fix_gates(build, "make gates pass after rebase")

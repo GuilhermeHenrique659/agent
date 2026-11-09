@@ -27,17 +27,27 @@ def output(title: str = "Refined") -> RefinementOutput:
     )
 
 
+def many(n: int, prefix: str = "task") -> RefinementOutput:
+    out = output()
+    out.tasks = [RefinedTask(title=f"{prefix} {i}") for i in range(n)]
+    return out
+
+
 def make_story() -> Story:
     return Story("S-0001", "t", description="## Request\nraw\n", status=StoryStatus.DISCOVERED)
 
 
 def refine(
-    tmp_path: Path, runtime: FakeAgentRuntime, story: Story, feedback: str | None = None
+    tmp_path: Path,
+    runtime: FakeAgentRuntime,
+    story: Story,
+    feedback: str | None = None,
+    config: ProjectConfig | None = None,
 ) -> Story:
     return asyncio.run(
         refine_story(
             story,
-            config=ProjectConfig(),
+            config=config or ProjectConfig(),
             project_root=tmp_path,
             runtime=runtime,
             context=Context(),
@@ -79,3 +89,44 @@ def test_agent_error_becomes_run_error(tmp_path: Path) -> None:
     with pytest.raises(RunError, match="boom"):
         refine(tmp_path, runtime, story)
     assert story.status == StoryStatus.DISCOVERED
+
+
+def test_over_limit_reruns_refiner_with_consolidation_feedback(tmp_path: Path) -> None:
+    runtime = FakeAgentRuntime()
+    runtime.script(Role.REFINER, Step(many(10)), Step(many(3)))
+    story = refine(tmp_path, runtime, make_story(), feedback="be brief")
+    assert len(story.tasks) == 3
+    assert len(runtime.requests) == 2
+    first, second = (r.prompt for r in runtime.requests)
+    assert "at most 8 tasks" in first
+    assert "be brief" in second
+    assert (
+        "You produced 10 tasks; the limit is 8. Consolidate them into at most 8 tasks, "
+        "each still one red→green cycle."
+    ) in second
+
+
+def test_still_over_limit_after_attempts_raises_run_error(tmp_path: Path) -> None:
+    runtime = FakeAgentRuntime()
+    runtime.script(Role.REFINER, Step(many(10)), Step(many(9)))
+    config = ProjectConfig.model_validate({"limits": {"max_attempts": 2}})
+    story = make_story()
+    with pytest.raises(RunError, match=r"9.*8"):
+        refine(tmp_path, runtime, story, config=config)
+    assert len(runtime.requests) == 2
+    assert story.status == StoryStatus.DISCOVERED
+
+
+def test_strips_leading_task_numbers_from_titles(tmp_path: Path) -> None:
+    out = output()
+    out.tasks = [
+        RefinedTask(title="T1: T1 X"),
+        RefinedTask(title="T2 - Y"),
+        RefinedTask(title="T10) Z"),
+        RefinedTask(title="T3"),
+        RefinedTask(title="Tidy up"),
+    ]
+    runtime = FakeAgentRuntime()
+    runtime.script(Role.REFINER, Step(out))
+    story = refine(tmp_path, runtime, make_story())
+    assert [t.title for t in story.tasks] == ["X", "Y", "Z", "T3", "Tidy up"]

@@ -19,6 +19,7 @@ from autodev.pipeline.prompts import (
     build_process_retro_prompt,
     build_qa_fix_prompt,
     build_qa_prompt,
+    build_refiner_prompt,
     build_review_fix_prompt,
     build_reviewer_prompt,
     build_test_fix_prompt,
@@ -236,3 +237,13 @@ def test_test_fix_prompt_limits_to_test_files() -> None:
     assert "E501 in tests/a.py" in text
     assert "only test files" in text
     assert "do not change what the tests assert" in text.lower()
+
+
+def test_refiner_prompt_states_task_limit_and_testable_rule(tmp_path: Path) -> None:
+    story = Story("S-0001", "t", description="d")
+    prompt = build_refiner_prompt(story, [], max_tasks=5)
+    assert "at most 5 tasks" in prompt
+    assert "failing test" in prompt
+    assert "documentation" in prompt
+    text = load_instructions(Role.REFINER, profile_for(Role.REFINER), tmp_path)
+    assert "failing test" in text and "documentation" in text

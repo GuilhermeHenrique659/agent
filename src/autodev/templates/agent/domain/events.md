@@ -1,13 +1,3 @@
 # Event storming
 
-## Domain events
-
-## Commands
-
-## Actors
-
-## Aggregates
-
-## Policies
-
-## Read models
+autodev appends one section per story here after discovery.

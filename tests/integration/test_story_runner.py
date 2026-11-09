@@ -764,3 +764,28 @@ def test_resume_restarts_pending_task_from_scratch(tmp_path: Path) -> None:
     assert (env.root / "notes_t1.txt").exists()
     (restart,) = [r for r in log_records(env.root) if r["event"] == "task_restarted"]
     assert restart["task"] == "T2" and restart["detail"] == kept
+
+
+def test_commit_subjects_are_short_and_keep_full_title_in_body(tmp_path: Path) -> None:
+    title = (
+        "Register the payment of an order when the customer confirms the cart contents "
+        "and the stock reservation succeeds for every single line"
+    )
+    env = make_env(tmp_path, tasks=[Task("T1", title)])
+    env.runtime.script(Role.TEST_WRITER, tw())
+    env.runtime.script(Role.IMPLEMENTER, impl(), impl({"impl.py": IMPL_GOOD + "# fix\n"}))
+    env.runtime.script(Role.REVIEWER, reject(), approve())
+    env.runtime.script(Role.QA, qa_ok())
+    story = run(env)
+    assert story.status == StoryStatus.DONE
+    log = subprocess.run(
+        ["git", "log", "--format=%s"], cwd=env.root, capture_output=True, text=True
+    ).stdout.splitlines()[:-1]
+    assert len(log) == 3
+    for subject in log:
+        assert len(subject) <= 72
+        assert subject.startswith(("test(T1): ", "feat(T1): ", "fix(review): "))
+    bodies = subprocess.run(
+        ["git", "log", "--format=%b%x00"], cwd=env.root, capture_output=True, text=True
+    ).stdout
+    assert bodies.count(title) == 2

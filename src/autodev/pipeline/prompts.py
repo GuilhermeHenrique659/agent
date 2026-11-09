@@ -55,6 +55,26 @@ def _story_section(story: Story) -> str:
     )
 
 
+def uncovered_criteria(story: Story) -> list[int]:
+    """1-based indexes of the acceptance criteria that no task maps tests to."""
+    covered = {c for t in story.tasks for c, names in t.coverage.items() if names}
+    return [i for i in range(1, len(story.acceptance_criteria) + 1) if i not in covered]
+
+
+def _coverage_section(story: Story) -> str:
+    lines = []
+    for index, criterion in enumerate(story.acceptance_criteria, start=1):
+        names = [n for t in story.tasks for n in t.coverage.get(index, [])]
+        lines.append(f"{index}. {criterion}: {', '.join(names) if names else '(no tests)'}")
+    missing = uncovered_criteria(story)
+    listed = ", ".join(str(i) for i in missing) if missing else "none"
+    return (
+        "Test coverage by acceptance criterion (as declared by the test writer):\n"
+        + "\n".join(lines)
+        + f"\nCriteria without tests: {listed}"
+    )
+
+
 def _context_section(context: list[Path]) -> str:
     listed = "\n".join(f"- {p}" for p in context) or "- (none)"
     return f"Project context files (read them first; paths relative to the project root):\n{listed}"
@@ -86,7 +106,12 @@ def _task_prompt(
 def build_test_writer_prompt(
     story: Story, task: Task, base_branch: str, context: list[Path], feedback: str | None = None
 ) -> str:
-    intro = "Write failing tests for this task only. Do not implement it."
+    intro = (
+        "Write failing tests for this task only. Do not implement it. In your output, map every "
+        "test you write to the acceptance criteria it proves: `coverage` is a list of "
+        "{criterion: <1-based number of the acceptance criterion, in the order listed below>, "
+        "tests: [<test function names>]}."
+    )
     return _task_prompt(intro, story, task, base_branch, context, feedback)
 
 
@@ -101,6 +126,25 @@ def build_implementer_prompt(
         "otherwise leave `test_defect` null."
     )
     return _task_prompt(intro, story, task, base_branch, context, feedback)
+
+
+def build_scaffold_prompt(
+    story: Story,
+    task: Task,
+    base_branch: str,
+    context: list[Path],
+    failure_output: str | None,
+) -> str:
+    intro = (
+        "Scaffold turn. The new tests of this task cannot run yet because the code they import "
+        "or call does not exist (see the test output below). Create only the declarations the "
+        "tests need to import and run: modules, classes, function and method signatures with full "
+        "type hints. Every function and method body must only raise NotImplementedError: no "
+        "behaviour, no logic, no return values, no defaults that compute anything. Never touch, "
+        "add or delete test files; the orchestrator rejects the change if a test file is touched. "
+        "Do not make any test pass."
+    )
+    return _task_prompt(intro, story, task, base_branch, context, failure_output)
 
 
 def build_review_fix_prompt(
@@ -121,10 +165,19 @@ def build_review_fix_prompt(
     )
 
 
-def build_reviewer_prompt(story: Story, base_branch: str, context: list[Path]) -> str:
+def build_reviewer_prompt(
+    story: Story, base_branch: str, context: list[Path], test_changes: str = ""
+) -> str:
+    changes = test_changes.strip() or "(none)"
     return (
         "Review the changes of this story. Use `git diff "
         f"{base_branch}...HEAD`.\n\n{_story_section(story)}\n\n"
+        f"{_coverage_section(story)}\n\n"
+        "Test changes after red are the test-file changes made after the commit that introduced "
+        f"each task's tests.\nTest changes after red:\n{changes}\n\n"
+        "Set `test_changes_confirmed` to true only if you checked every changed test above "
+        "against the acceptance criteria. List in `uncovered_criteria` each criterion without "
+        "tests that is not testable, with the reason.\n\n"
         f"Base branch: {base_branch}\n\n{_context_section(context)}"
     )
 
@@ -144,6 +197,10 @@ def build_refiner_prompt(
         "Refine this story: user story, acceptance criteria (Given/When/Then) and a short "
         f"ordered list of at most {max_tasks} tasks, each small enough for one red-to-green "
         "TDD cycle. "
+        "Order the tasks by dependency (domain, then application, then infrastructure, then API "
+        "wiring); each task must leave the build and the tests green on its own; a task that "
+        "changes a signature updates every caller in the same task; a task never depends on "
+        "something that a later task creates. "
         "Every task must describe observable behaviour that a failing test can prove; never "
         "create tasks that are only documentation, configuration or refactoring without "
         "behaviour (fold documentation updates into the task whose behaviour they document). "
@@ -165,7 +222,7 @@ def build_qa_prompt(story: Story, base_branch: str, context: list[Path]) -> str:
     return (
         "Run QA on this story: verify every acceptance criterion with evidence. "
         f"The changes are in `git diff {base_branch}...HEAD`.\n\n"
-        f"{_story_section(story)}\n\n"
+        f"{_story_section(story)}\n\n{_coverage_section(story)}\n\n"
         f"Base branch: {base_branch}\n\n{_context_section(context)}"
     )
 
@@ -265,6 +322,11 @@ def build_brief_prompt(context: list[Path], empty: bool) -> str:
         "tools: each command must set up or reuse the project environment by itself from the "
         "project files (examples: `uv run pytest`, `uv run ruff check .`, `npm ci && npm test`, "
         "`./gradlew test`); never assume tools are already installed. "
+        "If the test runner can write a JUnit XML report, make the test command write it to "
+        "`.agent/runs/junit.xml` (git-ignored) and set the `junit_report` TechBrief field to "
+        "that path, e.g. `uv run pytest --junitxml=.agent/runs/junit.xml`; autodev checks the "
+        "red phase per test once `tdd.junit_report` points to it "
+        "(leave `junit_report` null if the runner cannot write a JUnit report). "
         "If the stack has an auto-formatter or auto-fixer, also propose a self-contained "
         "`format` command that formats and auto-fixes the whole project "
         "(example: `uv run ruff format . && uv run ruff check --fix .`); autodev runs it "

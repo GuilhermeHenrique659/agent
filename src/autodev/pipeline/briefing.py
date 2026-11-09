@@ -7,11 +7,11 @@ from autodev.domain.role import Role
 from autodev.gates.runner import run_command, run_gates
 from autodev.pipeline import prompts
 from autodev.pipeline.adr import adr_dir, has_decisions, write_adr
-from autodev.pipeline.config_edit import set_commands
+from autodev.pipeline.config_edit import set_commands, set_value
 from autodev.pipeline.conversation import ask_accept_or_feedback, converse
 from autodev.pipeline.outputs import BootstrapOutput, TechBrief, TechBriefTurn
 from autodev.pipeline.run_log import RunLog
-from autodev.pipeline.story_runner import RunError, check_state_ignored
+from autodev.pipeline.story_runner import RunError, check_junit_ignored, check_state_ignored
 from autodev.ports.agent_runtime import AgentError, AgentRequest, AgentRuntime
 from autodev.ports.context_source import ContextSource
 from autodev.ports.user_io import UserIO
@@ -39,6 +39,8 @@ def render_tech_brief(brief: TechBrief) -> str:
         if name != "format" or value is not None
     )
     parts = [f"## Summary\n{brief.summary}", f"## Decisions\n{adrs}", f"## Commands\n{commands}"]
+    if brief.junit_report is not None:
+        parts.append(f"## JUnit report\n{brief.junit_report}")
     if brief.standards:
         parts.append("## Standards\n" + "\n".join(f"- {s}" for s in brief.standards))
     return "\n\n".join(parts) + "\n"
@@ -86,6 +88,7 @@ async def run_brief(
     docs_sha = _write_docs(brief, project_root, repo, log)
     config = load_config(project_root)
     if empty:
+        check_junit_ignored(config, repo)
         if config.commands.test is None:
             raise RunError("The technical brief defined no test command")
         await _bootstrap(
@@ -142,6 +145,8 @@ def _write_docs(brief: TechBrief, project_root: Path, repo: GitRepo, log: RunLog
         stack += f"\nProject conventions also live in: {', '.join(conventions)}.\n"
     (standards / "stack.md").write_text(stack)
     set_commands(project_root, brief.commands)
+    if brief.junit_report is not None:
+        set_value(project_root, "tdd.junit_report", brief.junit_report)
     try:
         repo.commit_paths(_DOC_PATHS, "docs: technical briefing")
     except GitError as exc:
@@ -183,6 +188,7 @@ async def run_bootstrap(
         raise RunError("The project already has code; bootstrap only runs on an empty repository")
     if config.commands.test is None:
         raise RunError("No test command configured (commands.test)")
+    check_junit_ignored(config, repo)
     await _bootstrap(
         recorded_decisions_text(project_root, config),
         repo.head(),

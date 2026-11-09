@@ -271,3 +271,52 @@ def test_commits_since(repo: GitRepo) -> None:
     first = write_commit(repo, "a.txt", "a\n", "test(T1): first")
     second = write_commit(repo, "b.txt", "b\n", "feat(T1): second")
     assert repo.commits_since(base) == [(first, "test(T1): first"), (second, "feat(T1): second")]
+
+
+def test_diff_names_lists_added_modified_deleted_and_renamed_paths(repo: GitRepo) -> None:
+    (repo.path / "gone.txt").write_text("gone\n")
+    (repo.path / "old.txt").write_text("a long enough line\nto be seen as a rename\n")
+    base = repo.commit_all("base")
+    (repo.path / "gone.txt").unlink()
+    (repo.path / "old.txt").rename(repo.path / "new.txt")
+    (repo.path / "README.md").write_text("changed\n")
+    (repo.path / "sub").mkdir()
+    (repo.path / "sub" / "added.txt").write_text("x")
+    repo.commit_all("change")
+    assert repo.diff_names(base, repo.head()) == [
+        "README.md",
+        "gone.txt",
+        "new.txt",
+        "old.txt",
+        "sub/added.txt",
+    ]
+
+
+def test_checkout_paths_restores_existing_and_removes_missing_paths(repo: GitRepo) -> None:
+    base = repo.head()
+    (repo.path / "README.md").write_text("changed\n")
+    (repo.path / "extra.txt").write_text("x")
+    (repo.path / "sub").mkdir()
+    (repo.path / "sub" / "deep.txt").write_text("y")
+    repo.commit_all("change")
+    repo.checkout_paths(base, ["README.md", "extra.txt", "sub/deep.txt"])
+    assert (repo.path / "README.md").read_text() == "hello\n"
+    assert not (repo.path / "extra.txt").exists()
+    assert not (repo.path / "sub" / "deep.txt").exists()
+    assert set(repo.changed_paths()) == {"README.md", "extra.txt", "sub/deep.txt"}
+    repo.reset_hard(repo.head())
+    assert (repo.path / "README.md").read_text() == "changed\n"
+    assert (repo.path / "extra.txt").exists()
+    assert (repo.path / "sub" / "deep.txt").exists()
+
+
+def test_added_lines_diff(repo: GitRepo) -> None:
+    (repo.path / "a.py").write_text("one\ntwo\n")
+    base = repo.commit_all("base")
+    (repo.path / "a.py").write_text("one\nTWO\nthree\n")
+    head = repo.commit_all("change")
+    diff = repo.added_lines_diff(base, head)
+    assert "+++ b/a.py" in diff
+    assert "+TWO" in diff and "+three" in diff
+    assert "-two" in diff
+    assert "\n one" not in diff  # no context lines

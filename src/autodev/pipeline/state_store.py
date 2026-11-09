@@ -25,7 +25,13 @@ class StoryStore:
             "blocked_reason": story.blocked_reason,
             "acceptance_criteria": story.acceptance_criteria,
             "tasks": [
-                {"id": t.id, "title": t.title, "status": t.status.value} for t in story.tasks
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "status": t.status.value,
+                    "coverage": {c: list(names) for c, names in t.coverage.items()},
+                }
+                for t in story.tasks
             ],
         }
         front = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True)
@@ -70,7 +76,15 @@ class StoryStore:
             description=match.group(2),
             status=StoryStatus(meta["status"]),
             acceptance_criteria=list(meta["acceptance_criteria"]),
-            tasks=[Task(t["id"], t["title"], TaskStatus(t["status"])) for t in meta["tasks"]],
+            tasks=[
+                Task(
+                    t["id"],
+                    t["title"],
+                    TaskStatus(t["status"]),
+                    {int(c): list(names) for c, names in (t.get("coverage") or {}).items()},
+                )
+                for t in meta["tasks"]
+            ],
             attempts=meta["attempts"],
             blocked_from=StoryStatus(blocked_from) if blocked_from else None,
             blocked_reason=meta["blocked_reason"],

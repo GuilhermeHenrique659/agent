@@ -51,6 +51,22 @@ tdd:
   # Multiline regex that matches one test definition per line. Used to make sure test-fix turns
   # (test defects reported by the implementer) never remove tests.
   test_name_pattern: '^\s*(?:async\s+)?def test_\w+|^\s*(?:it|test)\s*\('
+  # Optional. Path (relative to the project root) of a JUnit XML file that `commands.test` writes,
+  # e.g. test: "uv run pytest --junitxml=.agent/runs/junit.xml" with
+  # junit_report: ".agent/runs/junit.xml" (.agent/runs/ is git-ignored). When set, the red phase is
+  # checked per test (every new test must fail against a behaviour-less scaffold), a scaffold turn
+  # creates missing declarations, and each task ends with a re-check that its tests fail without
+  # the implementation. null = suite-level red/green only.
+  junit_report: null
+  # Regexes (Python syntax) checked only on lines ADDED to production files (not test files) by an
+  # implementation, review-fix, QA-fix or merge-fix loop; a match fails the attempt and is fed back.
+  # Placeholders must not be left behind: scaffold NotImplementedError has to be gone after green.
+  forbidden_patterns:
+    - 'type:\s*ignore'
+    - '#\s*noqa'
+    - 'NotImplementedError'
+    - '\bTODO\b'
+    - '\bFIXME\b'
 
 # `autodev run` suggests `autodev improve` once this many stories reached DONE since the last improve.
 improve:

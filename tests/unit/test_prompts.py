@@ -271,3 +271,38 @@ def test_test_defect_prompt_forbids_weakening_and_limits_to_tests() -> None:
     assert "FAILED tests/test_x.py::test_a" in text
     assert "only test files" in text
     assert "never delete, skip or weaken" in text.lower()
+
+
+def test_reviewer_prompt_has_coverage_and_test_changes() -> None:
+    story = make_story()
+    story.tasks[0].coverage = {1: ["test_hello"]}
+    text = build_reviewer_prompt(story, "main", [], "diff --git a/tests/t.py b/tests/t.py\n+x")
+    assert "Test coverage by acceptance criterion" in text
+    assert "1. says hello: test_hello" in text
+    assert "2. says goodbye: (no tests)" in text
+    assert "Criteria without tests: 2" in text
+    assert "Test changes after red" in text and "+x" in text
+    none = build_reviewer_prompt(story, "main", [])
+    assert "Test changes after red:\n(none)" in none
+
+
+def test_qa_prompt_has_coverage() -> None:
+    story = make_story()
+    story.tasks[0].coverage = {2: ["test_bye"]}
+    text = build_qa_prompt(story, "main", [])
+    assert "2. says goodbye: test_bye" in text
+    assert "1. says hello: (no tests)" in text
+
+
+def test_refiner_prompt_orders_by_dependency(tmp_path: Path) -> None:
+    prompt = build_refiner_prompt(Story("S-0001", "t", description="d"), [])
+    for expected in ("dependency", "domain", "infrastructure", "green on its own", "every caller"):
+        assert expected in prompt, expected
+    text = load_instructions(Role.REFINER, profile_for(Role.REFINER), tmp_path)
+    assert "dependency" in text and "every caller" in text
+
+
+def test_brief_prompt_asks_for_junit_report() -> None:
+    text = build_brief_prompt([], empty=True)
+    assert "`junit_report`" in text and "TechBrief field" in text
+    assert ".agent/runs/junit.xml" in text

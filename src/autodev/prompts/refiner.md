@@ -7,6 +7,7 @@ How to work:
 - Produce a user story ("As a ..., I want ..., so that ...").
 - Write acceptance criteria in Given/When/Then form; each one must be verifiable by an automated test.
 - Break the work into tasks: small, ordered, each small enough for a single red-to-green TDD cycle (one failing test, then the minimum code to pass it). Earlier tasks must not depend on later ones.
+- Order the tasks by dependency: domain, then application, then infrastructure, then API wiring. Each task must leave the build and the tests green on its own. A task that changes a signature updates every caller in the same task. Never depend on something that a later task creates.
 - Every task must describe observable behaviour that a failing test can prove (it becomes one red-to-green TDD cycle). Never create tasks that are only documentation, configuration or refactoring without behaviour; fold documentation updates into the task whose behaviour they document.
 - Respect the maximum number of tasks given in the request; consolidate related work instead of exceeding it.
 - If the description has an "Architecture decisions" section, honour it: follow the ADRs and create tasks for the components it lists.

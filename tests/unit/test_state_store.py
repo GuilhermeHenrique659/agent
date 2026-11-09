@@ -56,3 +56,24 @@ def test_next_id_starts_at_one_and_increments(tmp_path: Path) -> None:
     store.save(Story("S-0001", "a"))
     store.save(Story("S-0005", "b"))
     assert store.next_id() == "S-0006"
+
+
+def test_task_coverage_round_trips(tmp_path: Path) -> None:
+    task = Task("T1", "one", TaskStatus.DONE, coverage={1: ["test_a", "test_b"], 3: ["test_c"]})
+    story = Story("S-0001", "t", acceptance_criteria=["a", "b", "c"], tasks=[task])
+    store = StoryStore(tmp_path)
+    store.save(story)
+    loaded = store.get("S-0001")
+    assert loaded == story
+    assert loaded.tasks[0].coverage == {1: ["test_a", "test_b"], 3: ["test_c"]}
+
+
+def test_old_story_without_coverage_loads(tmp_path: Path) -> None:
+    path = tmp_path / ".agent" / "backlog" / "S-0001.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "---\nid: S-0001\ntitle: t\nstatus: draft\nattempts: 0\nblocked_from: null\n"
+        "blocked_reason: null\nacceptance_criteria: []\n"
+        "tasks:\n- id: T1\n  title: one\n  status: pending\n---\nbody"
+    )
+    assert StoryStore(tmp_path).get("S-0001").tasks[0].coverage == {}

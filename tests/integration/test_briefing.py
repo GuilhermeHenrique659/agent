@@ -67,13 +67,17 @@ FLAG_CMD = f"{PY} -B -c {shlex.quote(FLAG_SCRIPT)}"
 
 
 def brief(
-    test: str | None = TEST_CMD, title: str = "Use Python", format: str | None = None
+    test: str | None = TEST_CMD,
+    title: str = "Use Python",
+    format: str | None = None,
+    junit_report: str | None = None,
 ) -> TechBrief:
     return TechBrief(
         summary="A Python CLI",
         adrs=[AdrDraft(title=title, context="c", decision="Python 3.12", consequences="q")],
         commands=Commands(build=None, test=test, lint=None, format=format),
         standards=["Type everything"],
+        junit_report=junit_report,
     )
 
 
@@ -300,3 +304,20 @@ def test_bootstrap_runs_formatter_before_commit(tmp_path: Path) -> None:
     assert shown == "import sys\nsys.exit(0)  # PRETTY\n"
     log = next((env.root / ".agent" / "runs" / "brief").glob("*.jsonl")).read_text()
     assert '"event": "format"' in log
+
+
+def test_brief_writes_junit_report_to_config(tmp_path: Path) -> None:
+    env = make_env(tmp_path)
+    env.runtime.script(Role.ARCHITECT, brief_turn(brief(junit_report=".agent/runs/junit.xml")))
+    env.runtime.script(Role.IMPLEMENTER, bootstrap_step())
+    io = FakeIO("a")
+    run(env, io)
+    assert load_config(env.root).tdd.junit_report == ".agent/runs/junit.xml"
+    assert ".agent/runs/junit.xml" in "".join(io.shown)
+    show = subprocess.run(
+        ["git", "show", "--name-only", "--format=%s", "HEAD~1"],
+        cwd=env.root,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "docs: technical briefing" in show and ".agent/config.yaml" in show

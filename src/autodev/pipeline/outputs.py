@@ -3,16 +3,26 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+class CriterionCoverage(BaseModel):
+    criterion: int  # 1-based index into the story's acceptance criteria
+    tests: list[str]  # test function names
+
+
 class TestWriterOutput(BaseModel):
     __test__ = False  # not a pytest test class
 
     summary: str
     test_files: list[str]
+    coverage: list[CriterionCoverage] = []
 
 
 class ImplementerOutput(BaseModel):
     summary: str
     test_defect: str | None = None
+
+
+class ScaffoldOutput(BaseModel):
+    summary: str
 
 
 class Finding(BaseModel):
@@ -21,10 +31,17 @@ class Finding(BaseModel):
     message: str
 
 
+class UncoveredCriterion(BaseModel):
+    criterion: int  # 1-based index into the story's acceptance criteria
+    reason: str
+
+
 class ReviewOutput(BaseModel):
     approved: bool
     summary: str
     findings: list[Finding]
+    test_changes_confirmed: bool = False
+    uncovered_criteria: list[UncoveredCriterion] = []
 
 
 class GlossaryEntry(BaseModel):
@@ -123,6 +140,7 @@ class TechBrief(BaseModel):
     adrs: list[AdrDraft] = Field(min_length=1)
     commands: Commands
     standards: list[str] = []
+    junit_report: str | None = None
 
 
 class TechBriefTurn(Turn[TechBrief]):

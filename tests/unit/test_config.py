@@ -256,3 +256,17 @@ def test_test_name_pattern_default_and_template(tmp_path: Path) -> None:
     assert "test_name_pattern" in text
     write_config(tmp_path, text)
     assert load_config(tmp_path).tdd.test_name_pattern == pattern
+
+
+def test_junit_report_default_and_template(tmp_path: Path) -> None:
+    from importlib.resources import files
+
+    write_config(tmp_path, "")
+    assert load_config(tmp_path).tdd.junit_report is None
+    write_config(tmp_path, "tdd:\n  junit_report: .agent/runs/junit.xml\n")
+    assert load_config(tmp_path).tdd.junit_report == ".agent/runs/junit.xml"
+    text: Any = (files("autodev") / "templates" / "agent" / "config.yaml").read_text()
+    assert "junit_report: null" in text
+    assert "--junitxml=.agent/runs/junit.xml" in text
+    write_config(tmp_path, text)
+    assert load_config(tmp_path).tdd.junit_report is None

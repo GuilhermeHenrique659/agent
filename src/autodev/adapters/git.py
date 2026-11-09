@@ -86,6 +86,23 @@ class GitRepo:
         ).stdout
         return sorted(f for f in out.split("\0") if f)
 
+    def diff_names(self, a: str, b: str) -> list[str]:
+        """Paths that differ between commits `a` and `b` (renames reported as delete + add)."""
+        out = self._run("diff", "--name-only", "--no-renames", "-z", a, b).stdout
+        return sorted(f for f in out.split("\0") if f)
+
+    def added_lines_diff(self, base: str, head: str) -> str:
+        """Zero-context unified diff between `base` and `head`."""
+        return self._run("diff", "-U0", "--no-color", base, head).stdout
+
+    def checkout_paths(self, sha: str, paths: list[str]) -> None:
+        """Make `paths` match commit `sha` in the working tree: restored, or deleted if absent."""
+        for path in paths:
+            if self._run("cat-file", "-e", f"{sha}:{path}", check=False).returncode == 0:
+                self._run("checkout", sha, "--", path)
+            else:
+                (self.path / path).unlink(missing_ok=True)
+
     def changed_paths(self) -> list[str]:
         """Repo-relative paths modified, added, deleted or untracked in the working tree."""
         out = self._run("status", "--porcelain", "-z", "--untracked-files=all").stdout

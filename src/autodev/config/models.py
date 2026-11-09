@@ -123,6 +123,19 @@ class TddConfig(BaseModel):
     # Multiline regex matching one test definition per line; used to make sure test-fix turns
     # never remove tests.
     test_name_pattern: str = r"^\s*(?:async\s+)?def test_\w+|^\s*(?:it|test)\s*\("
+    # JUnit XML file (relative to the project root) that `commands.test` writes. Enables the
+    # per-test red check, the scaffold turn and the final red re-check.
+    junit_report: str | None = None
+    # Regexes; a line ADDED to a production file that matches one fails the attempt.
+    forbidden_patterns: list[str] = Field(
+        default_factory=lambda: [
+            r"type:\s*ignore",
+            r"#\s*noqa",
+            r"NotImplementedError",
+            r"\bTODO\b",
+            r"\bFIXME\b",
+        ]
+    )
 
 
 SettingSource = Literal["user", "project", "local"]

@@ -43,6 +43,8 @@ class Task:
     id: str
     title: str
     status: TaskStatus = TaskStatus.PENDING
+    # 1-based acceptance criterion index -> names of the tests that prove it
+    coverage: dict[int, list[str]] = field(default_factory=dict)
 
     def complete(self) -> None:
         if self.status == TaskStatus.DONE:
